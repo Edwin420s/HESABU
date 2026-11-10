@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: hesabu-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hesabu
+      POSTGRES_PASSWORD: hesabu_dev_password
+      POSTGRES_DB: hesabu
+    ports:
+      - "5433:5432"
+    volumes:
+      - hesabu_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hesabu -d hesabu"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  hesabu_pgdata:
