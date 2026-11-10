@@ -12,6 +12,7 @@ import recurringRoutes from './modules/recurring/recurring.routes.js';
 import anchorRoutes from './modules/anchors/anchors.routes.js';
 import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { invitationsRouter } from './modules/invitations/invitations.routes.js';
+import { fxRouter } from './modules/fx/fx.routes.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 
 import { prisma } from './config/prisma.js';
@@ -43,6 +44,7 @@ app.get('/api/health', async (_req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api', invitationsRouter);
+app.use('/api', fxRouter);
 app.use('/api/workspaces', workspaceRoutes);
 app.use('/api', financeRoutes);
 app.use('/api', campaignRoutes);
