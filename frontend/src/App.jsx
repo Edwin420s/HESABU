@@ -1223,6 +1223,7 @@ function ExpenseTable({ rows, currency, compact = false, refresh, setNotice }) {
 }
 
 function PaymentTable({ rows, currency, refresh, setNotice }) {
+  const [selectedReceipt, setSelectedReceipt] = useState(null);
   if (!rows.length) return <EmptyState text="No payment attempts yet. Open an obligation and create a payment attempt." />;
 
   async function handleVerify(p) {
@@ -1283,7 +1284,11 @@ function PaymentTable({ rows, currency, refresh, setNotice }) {
                     <button className="small-button" onClick={() => handleVerify(r)}>
                       {r.rail === 'STELLAR' ? 'Verify on Stellar' : r.rail === 'MPESA' ? 'Confirm M-Pesa' : 'Simulate verify'}
                     </button>
-                  ) : '—'}
+                  ) : (
+                    <button className="small-button" onClick={() => setSelectedReceipt(r)}>
+                      View Voucher
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -1293,6 +1298,46 @@ function PaymentTable({ rows, currency, refresh, setNotice }) {
       <p className="footnote">
         All verified settlements are atomically posted to the double-entry accounting journal.
       </p>
+
+      {selectedReceipt && (
+        <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setSelectedReceipt(null)}>
+          <div className="modal" style={{ maxWidth: '440px' }}>
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">VERIFIED TRANSACTION VOUCHER</p>
+                <h2>RCP-{selectedReceipt.id.slice(0, 8).toUpperCase()}</h2>
+              </div>
+              <button className="icon-button" onClick={() => setSelectedReceipt(null)}>×</button>
+            </div>
+            <div className="stack" style={{ fontSize: '12px' }}>
+              <div style={{ background: '#fafbfa', border: '1px solid #e7ebe7', padding: '14px', borderRadius: '8px' }}>
+                <p style={{ margin: '0 0 6px', color: '#7b8780' }}>Obligation Title</p>
+                <b style={{ fontSize: '13px' }}>{selectedReceipt.obligation?.title}</b>
+                <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Settlement Rail:</span>
+                  <b>{selectedReceipt.rail}</b>
+                </div>
+                <div style={{ marginTop: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Amount Settled:</span>
+                  <b style={{ color: '#245c46' }}>{money(selectedReceipt.amountMinor, currency)}</b>
+                </div>
+                <div style={{ marginTop: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Settlement Status:</span>
+                  <span className="crypto-badge"><CheckCircle2 size={12} /> {selectedReceipt.status}</span>
+                </div>
+                <div style={{ marginTop: '10px' }}>
+                  <span style={{ fontSize: '10px', color: '#7b8780' }}>Reference / Hash:</span>
+                  <div className="crypto-hash" style={{ marginTop: '4px' }}>{selectedReceipt.txHash || selectedReceipt.providerRef}</div>
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="secondary" onClick={() => setSelectedReceipt(null)}>Close</button>
+                <button type="button" className="primary" onClick={() => window.print()}>Print Receipt</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
