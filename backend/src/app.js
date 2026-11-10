@@ -10,6 +10,7 @@ import campaignRoutes from './modules/campaigns/campaigns.routes.js';
 import reimbursementRoutes from './modules/reimbursements/reimbursements.routes.js';
 import recurringRoutes from './modules/recurring/recurring.routes.js';
 import anchorRoutes from './modules/anchors/anchors.routes.js';
+import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 
 export const app = express();
@@ -27,6 +28,7 @@ app.use('/api', campaignRoutes);
 app.use('/api', reimbursementRoutes);
 app.use('/api', recurringRoutes);
 app.use('/api', anchorRoutes);
+app.use('/api', analyticsRouter);
 
 app.use(notFound);
 app.use(errorHandler);
