@@ -1,0 +1,17 @@
+{
+  "network": "testnet",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "compiledAt": "2026-11-10T21:53:41Z",
+  "contracts": {
+    "hesabu_anchor": {
+      "wasmPath": "/home/skywalker/Projects/prj/HESABU/HESABU/contracts/soroban/target/wasm32-unknown-unknown/release/hesabu_anchor.wasm",
+      "sha256": "593534b8359e1514e37292d265784d67d28ddd1bb9e0cb5fb37c2e0c5a3ffc70",
+      "status": "COMPILED"
+    },
+    "hesabu_escrow": {
+      "wasmPath": "/home/skywalker/Projects/prj/HESABU/HESABU/contracts/soroban/target/wasm32-unknown-unknown/release/hesabu_escrow.wasm",
+      "sha256": "872da6619a1e7e9468140cfe96e2aead9029d73a63911c0e5e6d1945459304ff",
+      "status": "COMPILED"
+    }
+  }
+}
