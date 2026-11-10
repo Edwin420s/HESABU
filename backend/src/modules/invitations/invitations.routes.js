@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../../config/prisma.js';
-import { requireAuth } from '../../middleware/auth.js';
-import { ForbiddenError, NotFoundError } from '../../shared/errors.js';
+import { authenticate } from '../../middleware/auth.js';
+import { AppError } from '../../shared/errors.js';
 
 export const invitationsRouter = Router();
 
@@ -13,14 +13,14 @@ const invitationTokens = new Map();
  * POST /api/workspaces/:workspaceId/invitations
  * Creates a signed invitation link with a 7-day cryptographic token
  */
-invitationsRouter.post('/workspaces/:workspaceId/invitations', requireAuth, async (req, res, next) => {
+invitationsRouter.post('/workspaces/:workspaceId/invitations', authenticate, async (req, res, next) => {
   try {
     const { workspaceId } = req.params;
     const { email, role = 'MEMBER' } = req.body;
 
     const membership = await prisma.membership.findUnique({
       where: {
-        workspaceId_userId: {
+        userId_workspaceId: {
           workspaceId,
           userId: req.user.id,
         },
@@ -28,7 +28,7 @@ invitationsRouter.post('/workspaces/:workspaceId/invitations', requireAuth, asyn
     });
 
     if (!membership || (membership.role !== 'OWNER' && membership.role !== 'ADMIN')) {
-      throw new ForbiddenError('Only workspace Owners and Admins can generate invitations');
+      throw new AppError('Only workspace Owners and Admins can generate invitations', 403, 'FORBIDDEN');
     }
 
     const token = crypto.randomBytes(24).toString('hex');
@@ -66,7 +66,7 @@ invitationsRouter.get('/invitations/:token/verify', async (req, res, next) => {
     const invite = invitationTokens.get(token);
 
     if (!invite || new Date() > invite.expiresAt) {
-      throw new NotFoundError('Invitation token is invalid or has expired');
+      throw new AppError('Invitation token is invalid or has expired', 404, 'NOT_FOUND');
     }
 
     const workspace = await prisma.workspace.findUnique({

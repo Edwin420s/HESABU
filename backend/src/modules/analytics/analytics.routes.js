@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { prisma } from '../../config/prisma.js';
-import { requireAuth } from '../../middleware/auth.js';
-import { NotFoundError } from '../../shared/errors.js';
+import { authenticate } from '../../middleware/auth.js';
+import { AppError } from '../../shared/errors.js';
 
 export const analyticsRouter = Router();
 
-analyticsRouter.use(requireAuth);
+analyticsRouter.use(authenticate);
 
 /**
  * GET /api/workspaces/:workspaceId/analytics/health-score
@@ -27,7 +27,7 @@ analyticsRouter.get('/workspaces/:workspaceId/analytics/health-score', async (re
       },
     });
 
-    if (!workspace) throw new NotFoundError('Workspace not found');
+    if (!workspace) throw new AppError('Workspace not found', 404, 'NOT_FOUND');
 
     const totalObligations = workspace.obligations.length;
     const settledObligations = workspace.obligations.filter((o) => o.status === 'SETTLED').length;

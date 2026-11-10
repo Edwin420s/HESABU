@@ -42,6 +42,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api', invitationsRouter);
 app.use('/api/workspaces', workspaceRoutes);
 app.use('/api', financeRoutes);
 app.use('/api', campaignRoutes);
@@ -49,7 +50,6 @@ app.use('/api', reimbursementRoutes);
 app.use('/api', recurringRoutes);
 app.use('/api', anchorRoutes);
 app.use('/api', analyticsRouter);
-app.use('/api', invitationsRouter);
 
 app.use(notFound);
 app.use(errorHandler);
