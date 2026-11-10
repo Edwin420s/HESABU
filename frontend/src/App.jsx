@@ -1518,6 +1518,8 @@ function Members({ workspace, refresh, setNotice }) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('MEMBER');
   const [message, setMessage] = useState('');
+  const [inviteRole, setInviteRole] = useState('MEMBER');
+  const [inviteToken, setInviteToken] = useState('');
 
   async function add(e) {
     e.preventDefault();
@@ -1528,6 +1530,16 @@ function Members({ workspace, refresh, setNotice }) {
       refresh();
     } catch (err) {
       setMessage(err.message);
+    }
+  }
+
+  async function generateInvite() {
+    try {
+      const res = await api(`/workspaces/${workspace.id}/invitations`, { method: 'POST', body: JSON.stringify({ role: inviteRole }) });
+      setInviteToken(res.invitationToken);
+      setNotice('Signed invitation token generated (valid for 7 days).');
+    } catch (err) {
+      setNotice(err.message);
     }
   }
 
@@ -1589,6 +1601,23 @@ function Members({ workspace, refresh, setNotice }) {
             {message && <p className="subtle">{message}</p>}
           </form>
         </section>
+      </div>
+
+      <div className="panel" style={{ marginTop: '16px' }}>
+        <h2>Signed Member Invitation Link</h2>
+        <p className="subtle">Generate a 7-day cryptographic token to onboard new members or external auditors.</p>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '12px' }}>
+          <select value={inviteRole} onChange={e => setInviteRole(e.target.value)} style={{ maxWidth: '200px' }}>
+            <option value="MEMBER">Member</option>
+            <option value="FINANCE_MANAGER">Finance Manager</option>
+            <option value="APPROVER">Approver</option>
+            <option value="AUDITOR">Auditor</option>
+          </select>
+          <button className="secondary" onClick={generateInvite}>Generate Token</button>
+          {inviteToken && (
+            <span className="crypto-hash" style={{ padding: '8px 12px' }}>Token: {inviteToken}</span>
+          )}
+        </div>
       </div>
     </>
   );
