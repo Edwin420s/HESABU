@@ -14,13 +14,32 @@ import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { invitationsRouter } from './modules/invitations/invitations.routes.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 
+import { prisma } from './config/prisma.js';
+
 export const app = express();
 app.use(helmet());
 app.use(cors({ origin: env.CORS_ORIGIN.split(',').map(v => v.trim()), credentials: false }));
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'hesabu-api', mode: env.PAYMENT_MODE, network: env.STELLAR_NETWORK }));
+app.get('/api/health', async (_req, res) => {
+  const start = Date.now();
+  let dbStatus = 'connected';
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch {
+    dbStatus = 'degraded';
+  }
+  const dbLatencyMs = Date.now() - start;
+
+  res.json({
+    status: dbStatus === 'connected' ? 'ok' : 'degraded',
+    service: 'hesabu-api',
+    mode: env.PAYMENT_MODE,
+    network: env.STELLAR_NETWORK,
+    database: { status: dbStatus, latencyMs: dbLatencyMs },
+  });
+});
 
 app.use('/api/auth', authRoutes);
 app.use('/api/workspaces', workspaceRoutes);
