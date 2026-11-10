@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: hesabu-postgres-prod
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hesabu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hesabu_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-hesabu_db}
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    networks:
+      - hesabu-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hesabu -d hesabu_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hesabu-api-prod
+    restart: always
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hesabu}:${POSTGRES_PASSWORD:-hesabu_secret}@db:5432/${POSTGRES_DB:-hesabu_db}?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hesabu-internal
+      - hesabu-public
+    ports:
+      - "4000:4000"
+
+networks:
+  hesabu-internal:
+    driver: bridge
+  hesabu-public:
+    driver: bridge
+
+volumes:
+  pgdata_prod:
