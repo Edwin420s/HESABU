@@ -247,8 +247,9 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
       api(`/workspaces/${workspaceId}/audit`),
       api(`/workspaces/${workspaceId}/anchors`).catch(() => ({ anchors: [] })),
       api(`/workspaces/${workspaceId}/reports/trial-balance`).catch(() => null),
-      api(`/workspaces/${workspaceId}/reports/income-statement`).catch(() => null)
-    ]).then(([d, o, c, e, r, rec, p, a, j, au, anc, tb, is]) => setData({
+      api(`/workspaces/${workspaceId}/reports/income-statement`).catch(() => null),
+      api(`/workspaces/${workspaceId}/analytics/health-score`).catch(() => null)
+    ]).then(([d, o, c, e, r, rec, p, a, j, au, anc, tb, is, an]) => setData({
       summary: d.summary,
       obligations: o.obligations,
       campaigns: c.campaigns || [],
@@ -261,7 +262,8 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
       auditLogs: au.auditLogs,
       anchors: anc.anchors || [],
       trialBalance: tb,
-      incomeStatement: is
+      incomeStatement: is,
+      analytics: an
     })).catch(err => setNotice(err.message));
   }, [workspaceId, refresh]);
 
@@ -320,6 +322,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           expenses={data.expenses}
           reimbursements={data.reimbursements}
           agent={data.agent}
+          analytics={data.analytics}
           setModal={setModal}
         />
         {modalUI}
@@ -477,7 +480,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
   return null;
 }
 
-function Overview({ workspace, summary, obligations, campaigns, expenses, reimbursements, agent, setModal }) {
+function Overview({ workspace, summary, obligations, campaigns, expenses, reimbursements, agent, analytics, setModal }) {
   const currency = workspace?.currency || 'KES';
   const pendingReimb = reimbursements?.filter(r => r.status === 'SUBMITTED')?.length || 0;
   const activeCampaigns = campaigns?.filter(c => c.status === 'ACTIVE')?.length || 0;
@@ -496,6 +499,28 @@ function Overview({ workspace, summary, obligations, campaigns, expenses, reimbu
         <Metric label="Outstanding balance" value={money(summary?.outstandingMinor, currency)} icon={<Activity />} tone="amber" />
         <Metric label="Approved expenses" value={money(summary?.approvedExpensesMinor, currency)} icon={<ArrowUpRight />} />
       </div>
+
+      {analytics && (
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '14px', marginBottom: '20px' }}>
+          <div className="panel" style={{ padding: '16px 20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <b style={{ fontSize: '13px' }}>Chama Financial Health Score</b>
+                <p className="subtle" style={{ margin: '3px 0 0' }}>Collection efficiency and organizational liquidity index</p>
+              </div>
+              <span className={`status status-${analytics.rating.toLowerCase()}`}>{analytics.rating} ({analytics.healthScore}/100)</span>
+            </div>
+            <div className="progress-bar-bg" style={{ marginTop: '12px' }}>
+              <div className={`progress-bar-fill ${analytics.healthScore >= 70 ? 'complete' : 'warning'}`} style={{ width: `${analytics.healthScore}%` }} />
+            </div>
+          </div>
+          <div className="panel" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <span className="subtle" style={{ fontSize: '11px' }}>Collection Efficiency</span>
+            <strong style={{ fontSize: '18px', color: '#245c46' }}>{analytics.metrics.collectionRatePct}% Settled</strong>
+            <small style={{ fontSize: '10px', color: '#8a958f' }}>{analytics.metrics.settledObligations} of {analytics.metrics.totalObligations} dues collected</small>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '20px' }}>
         <div className="metric-card" style={{ padding: '14px 18px' }}>
