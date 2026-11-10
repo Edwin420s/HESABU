@@ -868,49 +868,71 @@ function FinancialStatementsView({ trialBalance, incomeStatement, currency }) {
 }
 
 function AnchorsView({ anchors, currency }) {
-  if (!anchors?.length) return <EmptyState text="No period anchors generated yet. Generate an anchor to fingerprint journal entries into a canonical SHA-256 Merkle root." />;
-
   return (
-    <div className="panel">
-      <div className="panel-heading">
-        <div>
-          <h2>Cryptographic Period Fingerprints</h2>
-          <p>Canonical SHA-256 Merkle roots locking journal entries for external auditing</p>
+    <div className="stack">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '14px' }}>
+        <div className="metric-card" style={{ padding: '14px 18px' }}>
+          <p style={{ margin: '0 0 4px', fontSize: '11px', color: '#7b8780' }}>Soroban Contract</p>
+          <strong style={{ fontSize: '16px' }}>hesabu_anchor.wasm</strong>
+          <small>Stellar Testnet WASM</small>
         </div>
-        <span className="quiet-tag">{anchors.length} anchors</span>
+        <div className="metric-card" style={{ padding: '14px 18px' }}>
+          <p style={{ margin: '0 0 4px', fontSize: '11px', color: '#7b8780' }}>Cryptographic Scheme</p>
+          <strong style={{ fontSize: '16px' }}>SHA-256 Merkle</strong>
+          <small>256-bit canonical roots</small>
+        </div>
+        <div className="metric-card" style={{ padding: '14px 18px' }}>
+          <p style={{ margin: '0 0 4px', fontSize: '11px', color: '#7b8780' }}>Tamper-Proof Audit</p>
+          <strong style={{ fontSize: '16px' }}>Immutable</strong>
+          <small>Zero modifications allowed</small>
+        </div>
       </div>
 
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Anchor Reference</th>
-              <th>Period Window</th>
-              <th>Entries Sealed</th>
-              <th>SHA-256 Merkle Fingerprint</th>
-              <th>Verification</th>
-            </tr>
-          </thead>
-          <tbody>
-            {anchors.map(a => (
-              <tr key={a.id}>
-                <td>
-                  <b>{a.id.slice(0, 8)}…</b>
-                  <small>Generated {new Date(a.createdAt).toLocaleString()}</small>
-                </td>
-                <td>{new Date(a.periodStart).toLocaleDateString()} – {new Date(a.periodEnd).toLocaleDateString()}</td>
-                <td><b>{a.entryCount} entries</b></td>
-                <td>
-                  <span className="crypto-hash">{a.merkleRoot}</span>
-                </td>
-                <td>
-                  <span className="crypto-badge"><CheckCircle2 size={12} /> Cryptographically Sealed</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {!anchors?.length ? (
+        <EmptyState text="No period anchors generated yet. Generate an anchor to fingerprint journal entries into a canonical SHA-256 Merkle root." />
+      ) : (
+        <div className="panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Cryptographic Period Fingerprints</h2>
+              <p>Canonical SHA-256 Merkle roots locking journal entries for external auditing</p>
+            </div>
+            <span className="quiet-tag">{anchors.length} anchors</span>
+          </div>
+
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Anchor Reference</th>
+                  <th>Period Window</th>
+                  <th>Entries Sealed</th>
+                  <th>SHA-256 Merkle Fingerprint</th>
+                  <th>Verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                {anchors.map(a => (
+                  <tr key={a.id}>
+                    <td>
+                      <b>{a.id.slice(0, 8)}…</b>
+                      <small>Generated {new Date(a.createdAt).toLocaleString()}</small>
+                    </td>
+                    <td>{new Date(a.periodStart).toLocaleDateString()} – {new Date(a.periodEnd).toLocaleDateString()}</td>
+                    <td><b>{a.entryCount} entries</b></td>
+                    <td>
+                      <span className="crypto-hash">{a.merkleRoot}</span>
+                    </td>
+                    <td>
+                      <span className="crypto-badge"><CheckCircle2 size={12} /> Cryptographically Sealed</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
