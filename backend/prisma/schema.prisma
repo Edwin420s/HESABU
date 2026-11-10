@@ -1,0 +1,315 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkspaceType {
+  PERSONAL
+  GROUP
+  COMMUNITY
+  SME
+  ORGANISATION
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  FINANCE_MANAGER
+  APPROVER
+  MEMBER
+  AUDITOR
+}
+
+enum ObligationStatus {
+  OPEN
+  PARTIALLY_PAID
+  SETTLED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  CONFIRMED
+  FAILED
+  EXPIRED
+}
+
+enum PaymentRail {
+  DEVELOPMENT
+  STELLAR
+  MPESA
+  OTHER
+}
+
+enum ExpenseStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum JournalStatus {
+  POSTED
+  REVERSED
+}
+
+model User {
+  id                String            @id @default(cuid())
+  name              String
+  email             String            @unique
+  passwordHash      String
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  memberships       Membership[]
+  createdWorkspaces Workspace[]       @relation("WorkspaceCreator")
+  auditLogs         AuditLog[]
+}
+
+model Workspace {
+  id                     String              @id @default(cuid())
+  name                   String
+  type                   WorkspaceType       @default(GROUP)
+  currency               String              @default("KES")
+  spendingThresholdMinor BigInt?
+  createdById            String
+  createdBy              User                @relation("WorkspaceCreator", fields: [createdById], references: [id])
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  memberships            Membership[]
+  campaigns              Campaign[]
+  obligations            Obligation[]
+  expenses               Expense[]
+  reimbursements         Reimbursement[]
+  payments               Payment[]
+  settlements            Settlement[]
+  journalEntries         JournalEntry[]
+  auditLogs              AuditLog[]
+  recurringSchedules     RecurringSchedule[]
+  statementAnchors       StatementAnchor[]
+}
+
+model Membership {
+  id          String        @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        WorkspaceRole @default(MEMBER)
+  joinedAt    DateTime      @default(now())
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId, role])
+}
+
+model Campaign {
+  id                String       @id @default(cuid())
+  workspaceId       String
+  title             String
+  description       String?
+  targetAmountMinor BigInt
+  currency          String
+  deadline          DateTime?
+  status            String       @default("ACTIVE")
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  workspace         Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  obligations       Obligation[]
+
+  @@index([workspaceId, status])
+}
+
+model Obligation {
+  id          String           @id @default(cuid())
+  workspaceId String
+  campaignId  String?
+  title       String
+  description String?
+  memberName  String
+  memberEmail String?
+  amountMinor BigInt
+  currency    String
+  dueAt       DateTime?
+  status      ObligationStatus @default(OPEN)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign    Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  payments    Payment[]
+  settlements Settlement[]
+
+  @@index([workspaceId, status])
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  workspaceId    String
+  obligationId   String
+  rail           PaymentRail
+  status         PaymentStatus @default(PENDING)
+  amountMinor    BigInt
+  currency       String
+  providerRef    String?       @unique
+  idempotencyKey String        @unique
+  txHash         String?       @unique
+  payerReference String?
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  obligation     Obligation    @relation(fields: [obligationId], references: [id])
+  settlement     Settlement?
+
+  @@index([workspaceId, status])
+}
+
+model Settlement {
+  id           String      @id @default(cuid())
+  workspaceId  String
+  obligationId String
+  paymentId    String      @unique
+  amountMinor  BigInt
+  currency     String
+  rail         PaymentRail
+  externalRef  String?     @unique
+  verifiedAt   DateTime    @default(now())
+  workspace    Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  obligation   Obligation  @relation(fields: [obligationId], references: [id])
+  payment      Payment     @relation(fields: [paymentId], references: [id])
+}
+
+model Expense {
+  id             String            @id @default(cuid())
+  workspaceId    String
+  title          String
+  description    String?
+  category       String
+  amountMinor    BigInt
+  currency       String
+  submittedById  String
+  status         ExpenseStatus     @default(SUBMITTED)
+  receiptUrl     String?
+  approvedById   String?
+  approvalNote   String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  splits         ExpenseSplit[]
+  approvals      ExpenseApproval[]
+  reimbursements Reimbursement[]
+
+  @@index([workspaceId, status])
+}
+
+model ExpenseSplit {
+  id          String   @id @default(cuid())
+  expenseId   String
+  memberName  String
+  memberEmail String?
+  amountMinor BigInt
+  percentage  Decimal?
+  settled     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  expense     Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+}
+
+model ExpenseApproval {
+  id           String   @id @default(cuid())
+  expenseId    String
+  reviewerId   String
+  reviewerName String
+  status       String
+  note         String?
+  createdAt    DateTime @default(now())
+  expense      Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+}
+
+model Reimbursement {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  expenseId    String?
+  claimantId   String
+  claimantName String
+  amountMinor  BigInt
+  currency     String
+  status       String    @default("PENDING")
+  notes        String?
+  paymentRef   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  expense      Expense?  @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
+}
+
+model RecurringSchedule {
+  id          String    @id @default(cuid())
+  workspaceId String
+  title       String
+  frequency   String    @default("MONTHLY")
+  amountMinor BigInt
+  currency    String
+  nextRunAt   DateTime
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model StatementAnchor {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  periodStart    DateTime
+  periodEnd      DateTime
+  merkleRootHash String
+  txHash         String?
+  network        String    @default("testnet")
+  createdById    String
+  createdAt      DateTime  @default(now())
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model JournalEntry {
+  id                String        @id @default(cuid())
+  workspaceId       String
+  reference         String        @unique
+  description       String
+  status            JournalStatus @default(POSTED)
+  reversedEntryId   String?       @unique
+  postedAt          DateTime      @default(now())
+  workspace         Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lines             JournalLine[]
+}
+
+model JournalLine {
+  id             String       @id @default(cuid())
+  journalEntryId String
+  accountCode    String
+  side           String
+  amountMinor    BigInt
+  currency       String
+  entry          JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+
+  @@index([accountCode, currency])
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  workspaceId String
+  actorId     String?
+  action      String
+  entityType  String
+  entityId    String
+  details     Json?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor       User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+}
