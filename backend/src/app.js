@@ -14,6 +14,7 @@ import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { invitationsRouter } from './modules/invitations/invitations.routes.js';
 import { fxRouter } from './modules/fx/fx.routes.js';
 import { notificationsRouter } from './modules/notifications/notifications.routes.js';
+import { auditRouter } from './modules/audit/audit.routes.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 
 import { prisma } from './config/prisma.js';
@@ -54,6 +55,7 @@ app.use('/api', recurringRoutes);
 app.use('/api', anchorRoutes);
 app.use('/api', analyticsRouter);
 app.use('/api', notificationsRouter);
+app.use('/api', auditRouter);
 
 app.use(notFound);
 app.use(errorHandler);
