@@ -408,6 +408,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           title="Payment Transactions"
           description="Payment attempts remain pending until independently verified on Stellar Horizon or Safaricom M-Pesa."
         />
+        <FxConverterCard />
         <PaymentTable rows={data.payments} currency={currency} refresh={refresh} setNotice={setNotice} />
       </>
     );
@@ -471,7 +472,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           title="Audit Trail"
           description="Complete immutable history of administrative, financial, and security actions."
         />
-        <AuditView logs={data.auditLogs} />
+        <AuditView logs={data.auditLogs} workspaceId={workspaceId} />
       </>
     );
   }
@@ -1415,8 +1416,105 @@ function LedgerView({ entries, currency, refresh, setNotice }) {
   );
 }
 
-function AuditView({ logs }) {
+function FxConverterCard() {
+  const [fromCurr, setFromCurr] = useState('USD');
+  const [toCurr, setToCurr] = useState('KES');
+  const [amount, setAmount] = useState('100');
+  const [conversion, setConversion] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const val = parseFloat(amount);
+    if (isNaN(val) || val <= 0) return;
+    const decimals = (fromCurr === 'UGX' || fromCurr === 'TZS') ? 1 : 100;
+    const amountMinor = Math.round(val * decimals);
+
+    setLoading(true);
+    fetch('/api/fx/convert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amountMinor, fromCurrency: fromCurr, toCurrency: toCurr })
+    })
+      .then(r => r.json())
+      .then(d => {
+        setConversion(d);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [fromCurr, toCurr, amount]);
+
+  return (
+    <div className="panel" style={{ marginBottom: '20px', padding: '18px 24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+        <div>
+          <b style={{ fontSize: '14px' }}>Multi-Currency Settlement Calculator</b>
+          <p className="subtle" style={{ margin: '2px 0 0', fontSize: '12px' }}>Real-time conversion matrix for diaspora contributions and cross-border operations</p>
+        </div>
+        <span className="quiet-tag">Mid-market FX</span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '12px', alignItems: 'center' }}>
+        <div>
+          <label style={{ fontSize: '11px', display: 'block', color: '#64748b', marginBottom: '4px' }}>From Currency & Amount</label>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <select value={fromCurr} onChange={e => setFromCurr(e.target.value)} style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+              <option value="GBP">GBP</option>
+              <option value="KES">KES</option>
+              <option value="UGX">UGX</option>
+            </select>
+            <input
+              type="number"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              style={{ width: '100px', padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label style={{ fontSize: '11px', display: 'block', color: '#64748b', marginBottom: '4px' }}>To Currency</label>
+          <select value={toCurr} onChange={e => setToCurr(e.target.value)} style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', width: '100%' }}>
+            <option value="KES">KES (Kenya Shilling)</option>
+            <option value="USD">USD (US Dollar)</option>
+            <option value="EUR">EUR (Euro)</option>
+            <option value="GBP">GBP (British Pound)</option>
+            <option value="UGX">UGX (Uganda Shilling)</option>
+          </select>
+        </div>
+
+        <div style={{ background: '#f8fafc', padding: '10px 16px', borderRadius: '6px', border: '1px solid #e2e8f0', textAlign: 'right' }}>
+          <span style={{ fontSize: '11px', color: '#64748b' }}>Estimated Settlement</span>
+          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#0f172a' }}>
+            {loading ? 'Calculating...' : conversion ? `${toCurr} ${(conversion.targetAmountMinor / ((toCurr === 'UGX' || toCurr === 'TZS') ? 1 : 100)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+          </div>
+          {conversion && <small style={{ fontSize: '11px', color: '#94a3b8' }}>Rate: 1 {fromCurr} = {conversion.exchangeRate} {toCurr}</small>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuditView({ logs, workspaceId }) {
   if (!logs?.length) return <EmptyState text="No audit trail events recorded yet." />;
+
+  function downloadCsv() {
+    const token = localStorage.getItem('hesabu_token');
+    fetch(`/api/workspaces/${workspaceId}/audit-logs/export`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.blob())
+      .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `hesabu_audit_${workspaceId}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      });
+  }
 
   return (
     <div className="panel">
@@ -1425,7 +1523,12 @@ function AuditView({ logs }) {
           <h2>Workspace Audit Trail</h2>
           <p>Security and financial actions logged with actor identity and timestamp.</p>
         </div>
-        <span className="quiet-tag">{logs.length} events</span>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button className="secondary" onClick={downloadCsv} style={{ fontSize: '12px', padding: '6px 12px' }}>
+            Export CSV
+          </button>
+          <span className="quiet-tag">{logs.length} events</span>
+        </div>
       </div>
 
       <div className="table-wrap">
