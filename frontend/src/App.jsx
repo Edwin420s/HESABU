@@ -131,6 +131,9 @@ function App() {
           <NavButton active={page === 'expenses'} onClick={() => setPage('expenses')} icon={<Receipt size={17} />} label="Expenses & Splits" />
           <NavButton active={page === 'reimbursements'} onClick={() => setPage('reimbursements')} icon={<PiggyBank size={17} />} label="Reimbursements" />
           <NavButton active={page === 'recurring'} onClick={() => setPage('recurring')} icon={<Repeat size={17} />} label="Recurring Dues" />
+          <NavButton active={page === 'rosca'} onClick={() => setPage('rosca')} icon={<Repeat size={17} />} label="Merry-Go-Round" />
+          <NavButton active={page === 'loans'} onClick={() => setPage('loans')} icon={<PiggyBank size={17} />} label="Table Loans" />
+          <NavButton active={page === 'budgets'} onClick={() => setPage('budgets')} icon={<Target size={17} />} label="Budget Variance" />
           <NavButton active={page === 'payments'} onClick={() => setPage('payments')} icon={<CreditCard size={17} />} label="Payments & Rails" />
           <NavButton active={page === 'agent'} onClick={() => setPage('agent')} icon={<Bot size={17} />} label="Agentic Copilot" />
         </nav>
@@ -226,7 +229,10 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
     auditLogs: [],
     anchors: [],
     trialBalance: null,
-    incomeStatement: null
+    incomeStatement: null,
+    rosca: [],
+    loans: [],
+    variance: null
   });
   const [modal, setModal] = useState('');
   const [payModal, setPayModal] = useState(null);
@@ -248,8 +254,11 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
       api(`/workspaces/${workspaceId}/anchors`).catch(() => ({ anchors: [] })),
       api(`/workspaces/${workspaceId}/reports/trial-balance`).catch(() => null),
       api(`/workspaces/${workspaceId}/reports/income-statement`).catch(() => null),
-      api(`/workspaces/${workspaceId}/analytics/health-score`).catch(() => null)
-    ]).then(([d, o, c, e, r, rec, p, a, j, au, anc, tb, is, an]) => setData({
+      api(`/workspaces/${workspaceId}/analytics/health-score`).catch(() => null),
+      api(`/workspaces/${workspaceId}/rosca`).catch(() => ({ cycles: [] })),
+      api(`/workspaces/${workspaceId}/loans`).catch(() => ({ loans: [] })),
+      api(`/workspaces/${workspaceId}/budgets/variance`).catch(() => null)
+    ]).then(([d, o, c, e, r, rec, p, a, j, au, anc, tb, is, an, ro, lo, va]) => setData({
       summary: d.summary,
       obligations: o.obligations,
       campaigns: c.campaigns || [],
@@ -263,7 +272,10 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
       anchors: anc.anchors || [],
       trialBalance: tb,
       incomeStatement: is,
-      analytics: an
+      analytics: an,
+      rosca: ro.cycles || [],
+      loans: lo.loans || [],
+      variance: va
     })).catch(err => setNotice(err.message));
   }, [workspaceId, refresh]);
 
@@ -399,6 +411,15 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
         {modalUI}
       </>
     );
+  }
+  if (page === 'rosca') {
+    return <RoscaView workspaceId={workspaceId} cycles={data.rosca || []} refresh={refresh} setNotice={setNotice} currency={currency} />;
+  }
+  if (page === 'loans') {
+    return <LoansView workspaceId={workspaceId} loans={data.loans || []} refresh={refresh} setNotice={setNotice} currency={currency} />;
+  }
+  if (page === 'budgets') {
+    return <BudgetVarianceView workspaceId={workspaceId} variance={data.variance} currency={currency} />;
   }
   if (page === 'payments') {
     return (
@@ -1947,6 +1968,247 @@ function Modal({ type, onClose, onSubmit, busy, members }) {
         </form>
       </div>
     </div>
+  );
+}
+
+function RoscaView({ workspaceId, cycles, refresh, setNotice, currency }) {
+  const [modal, setModal] = useState(false);
+  const [name, setName] = useState('');
+  const [amount, setAmount] = useState('5000');
+  const [busy, setBusy] = useState(false);
+
+  async function createCycle(e) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api(`/workspaces/${workspaceId}/rosca`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          contributionPerMemberMinor: Math.round(parseFloat(amount) * 100),
+          memberIds: ['m_admin', 'm_treasurer', 'm_member_1'],
+        }),
+      });
+      setModal(false);
+      refresh();
+      setNotice('ROSCA Merry-Go-Round cycle created successfully');
+    } catch (err) {
+      setNotice(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="COMMUNITY WEALTH ACCUMULATION"
+        title="Merry-Go-Round (ROSCA) Circles"
+        description="Rotating savings and credit rounds ensuring scheduled, transparent pool disbursements to members."
+        action={<button className="primary" onClick={() => setModal(true)}><Plus size={16} /> New Merry-Go-Round</button>}
+      />
+
+      {!cycles?.length ? (
+        <EmptyState text="No active Merry-Go-Round cycles found. Create one to begin rotating pool rounds." />
+      ) : (
+        <div className="grid">
+          {cycles.map((c) => (
+            <div key={c.id} className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3>{c.name}</h3>
+                <span className="status status-active">{c.status}</span>
+              </div>
+              <p className="subtle" style={{ margin: '6px 0 12px' }}>Round {c.currentRound} of {c.totalRounds}</p>
+              <div className="metric-row">
+                <div>
+                  <span className="subtle">Target Pot</span>
+                  <b>{money(c.potPerRoundMinor, currency)}</b>
+                </div>
+                <div>
+                  <span className="subtle">Per Member Dues</span>
+                  <b>{money(c.contributionPerMemberMinor, currency)}</b>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {modal && (
+        <Modal title="Create Merry-Go-Round Cycle" onClose={() => setModal(false)}>
+          <form onSubmit={createCycle} className="stack">
+            <Field label="Cycle Name">
+              <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. 2026 Monthly Rotation" />
+            </Field>
+            <Field label={`Contribution per Member (${currency})`}>
+              <input type="number" required value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </Field>
+            <button className="primary" disabled={busy}>{busy ? 'Creating...' : 'Launch Cycle'}</button>
+          </form>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function LoansView({ workspaceId, loans, refresh, setNotice, currency }) {
+  const [modal, setModal] = useState(false);
+  const [principal, setPrincipal] = useState('20000');
+  const [duration, setDuration] = useState('6');
+  const [rate, setRate] = useState('10');
+  const [type, setType] = useState('FLAT');
+  const [busy, setBusy] = useState(false);
+
+  async function applyLoan(e) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api(`/workspaces/${workspaceId}/loans/apply`, {
+        method: 'POST',
+        body: JSON.stringify({
+          principalMinor: Math.round(parseFloat(principal) * 100),
+          durationMonths: parseInt(duration),
+          interestRatePct: parseFloat(rate),
+          interestType: type,
+        }),
+      });
+      setModal(false);
+      refresh();
+      setNotice('Loan application submitted for approval');
+    } catch (err) {
+      setNotice(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="CREDIT & CAPITAL"
+        title="Table Banking Loans"
+        description="Internal peer lending, interest amortization schedules, and member repayments."
+        action={<button className="primary" onClick={() => setModal(true)}><Plus size={16} /> Request Loan</button>}
+      />
+
+      {!loans?.length ? (
+        <EmptyState text="No loans issued yet. Members can apply for table banking loans from collective reserves." />
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Loan ID</th>
+                <th>Principal</th>
+                <th>Total Interest</th>
+                <th>Total Payable</th>
+                <th>Repaid</th>
+                <th>Outstanding</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loans.map((l) => (
+                <tr key={l.id}>
+                  <td><b>{l.id.slice(0, 10)}...</b></td>
+                  <td>{money(l.principalMinor, currency)}</td>
+                  <td>{money(l.totalInterestMinor, currency)} ({l.interestType})</td>
+                  <td>{money(l.totalPayableMinor, currency)}</td>
+                  <td>{money(l.totalRepaidMinor, currency)}</td>
+                  <td><b>{money(l.outstandingMinor, currency)}</b></td>
+                  <td><span className={`status status-${l.status.toLowerCase().replaceAll('_', '-')}`}>{l.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal && (
+        <Modal title="Apply for Table Banking Loan" onClose={() => setModal(false)}>
+          <form onSubmit={applyLoan} className="stack">
+            <Field label={`Principal Amount (${currency})`}>
+              <input type="number" required value={principal} onChange={(e) => setPrincipal(e.target.value)} />
+            </Field>
+            <Field label="Duration (Months)">
+              <input type="number" min="1" max="36" required value={duration} onChange={(e) => setDuration(e.target.value)} />
+            </Field>
+            <Field label="Annual Interest Rate (%)">
+              <input type="number" required value={rate} onChange={(e) => setRate(e.target.value)} />
+            </Field>
+            <Field label="Interest Calculation Model">
+              <select value={type} onChange={(e) => setType(e.target.value)}>
+                <option value="FLAT">Flat Rate</option>
+                <option value="REDUCING_BALANCE">Reducing Balance</option>
+              </select>
+            </Field>
+            <button className="primary" disabled={busy}>{busy ? 'Submitting...' : 'Submit Application'}</button>
+          </form>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function BudgetVarianceView({ workspaceId, variance, currency }) {
+  if (!variance?.categories?.length) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="TREASURY DISCIPLINE"
+          title="Budget vs Actual Variance"
+          description="Track category allocations, operational spending, and prevent budget overruns."
+        />
+        <EmptyState text="No budget limits configured for this workspace yet." />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="TREASURY DISCIPLINE"
+        title="Budget vs Actual Variance"
+        description="Track category allocations, operational spending, and prevent budget overruns."
+      />
+      <div className="metric-grid" style={{ marginBottom: '20px' }}>
+        <Metric label="Allocated Budget" value={money(variance.totalAllocatedMinor, currency)} icon={<Wallet />} />
+        <Metric label="Actual Expenditure" value={money(variance.totalActualMinor, currency)} icon={<Receipt />} />
+        <Metric label="Net Variance" value={money(variance.totalVarianceMinor, currency)} icon={<Activity />} tone={variance.totalVarianceMinor >= 0 ? 'green' : 'amber'} />
+        <Metric label="Budget Consumed" value={`${variance.overallUtilizationPct}%`} icon={<Target />} />
+      </div>
+
+      <div className="panel">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Period</th>
+                <th>Allocated</th>
+                <th>Actual Spent</th>
+                <th>Variance Remaining</th>
+                <th>Utilization</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {variance.categories.map((c) => (
+                <tr key={c.category}>
+                  <td><b>{c.category}</b></td>
+                  <td>{c.period}</td>
+                  <td>{money(c.allocatedMinor, currency)}</td>
+                  <td>{money(c.actualMinor, currency)}</td>
+                  <td>{money(c.varianceMinor, currency)}</td>
+                  <td>{c.utilizationPct}%</td>
+                  <td><span className={`status status-${c.status.toLowerCase().replaceAll('_', '-')}`}>{c.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
   );
 }
 
