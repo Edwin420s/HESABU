@@ -17,6 +17,7 @@ import { notificationsRouter } from './modules/notifications/notifications.route
 import { auditRouter } from './modules/audit/audit.routes.js';
 import { roscaRouter } from './modules/rosca/rosca.routes.js';
 import { loanRouter } from './modules/loans/loan.routes.js';
+import { budgetRouter } from './modules/budget/budget.routes.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 
 import { prisma } from './config/prisma.js';
@@ -60,6 +61,7 @@ app.use('/api', notificationsRouter);
 app.use('/api', auditRouter);
 app.use('/api', roscaRouter);
 app.use('/api', loanRouter);
+app.use('/api', budgetRouter);
 
 app.use(notFound);
 app.use(errorHandler);
