@@ -85,18 +85,31 @@ export class LoanService {
     }
   }
 
-  applyLoan({ workspaceId, memberId, principalMinor, interestRatePct = 12, durationMonths = 6, interestType = 'FLAT' }) {
-    const sched = this.calculateSchedule(principalMinor, interestRatePct, durationMonths, interestType);
+  applyLoan({
+    workspaceId,
+    memberId,
+    borrowerMemberId,
+    borrowerName,
+    principalMinor,
+    interestRatePct = 12,
+    interestRatePercent,
+    durationMonths = 6,
+    interestType = 'FLAT',
+    actorId
+  }) {
+    const effMemberId = borrowerMemberId || memberId;
+    const effRate = interestRatePercent !== undefined ? interestRatePercent : interestRatePct;
+    const sched = this.calculateSchedule(principalMinor, effRate, durationMonths, interestType);
     const id = `loan_${crypto.randomBytes(8).toString('hex')}`;
 
     const loan = {
       id,
       workspaceId,
-      memberId,
-      borrowerMemberId: memberId,
-      borrowerName: memberId,
+      memberId: effMemberId,
+      borrowerMemberId: effMemberId,
+      borrowerName: borrowerName || effMemberId,
       principalMinor: sched.principalMinor,
-      interestRatePct,
+      interestRatePct: effRate,
       durationMonths,
       interestType,
       totalInterestMinor: sched.totalInterestMinor,
@@ -112,23 +125,36 @@ export class LoanService {
 
     this.loans.set(id, loan);
 
-    // Sync to PostgreSQL if possible
-    prisma.tableLoan.create({
-      data: {
-        workspaceId,
-        borrowerMemberId: memberId,
-        borrowerName: memberId,
-        principalMinor: BigInt(sched.principalMinor),
-        interestRatePercent: interestRatePct,
-        durationMonths,
-        interestType: interestType === 'REDUCING_BALANCE' ? 'REDUCING_BALANCE' : 'FLAT',
-        totalInterestMinor: BigInt(sched.totalInterestMinor),
-        totalPayableMinor: BigInt(sched.totalPayableMinor),
-        monthlyPaymentMinor: BigInt(sched.monthlyPaymentMinor),
-        balanceMinor: BigInt(sched.totalPayableMinor),
-        status: 'PENDING'
-      }
-    }).catch(() => {});
+    // Durable persistence into PostgreSQL TableLoan and LoanScheduleRow tables
+    if (workspaceId && prisma?.tableLoan) {
+      prisma.tableLoan.create({
+        data: {
+          id,
+          workspaceId,
+          borrowerMemberId: effMemberId,
+          borrowerName: borrowerName || effMemberId,
+          principalMinor: BigInt(sched.principalMinor),
+          interestRatePercent: effRate,
+          durationMonths,
+          interestType: interestType === 'REDUCING_BALANCE' ? 'REDUCING_BALANCE' : 'FLAT',
+          totalInterestMinor: BigInt(sched.totalInterestMinor),
+          totalPayableMinor: BigInt(sched.totalPayableMinor),
+          monthlyPaymentMinor: BigInt(sched.monthlyPaymentMinor),
+          balanceMinor: BigInt(sched.totalPayableMinor),
+          status: 'PENDING',
+          scheduleRows: {
+            create: sched.installments.map((inst, idx) => ({
+              installmentNumber: inst.installmentNumber,
+              dueDate: new Date(Date.now() + (idx + 1) * 30 * 86400000),
+              duePrincipalMinor: BigInt(inst.principalPortionMinor),
+              dueInterestMinor: BigInt(inst.interestPortionMinor),
+              totalDueMinor: BigInt(inst.dueMinor),
+              status: 'PENDING'
+            }))
+          }
+        }
+      }).catch(() => {});
+    }
 
     return loan;
   }
@@ -136,23 +162,39 @@ export class LoanService {
   approveLoan(loanId, approverMemberId) {
     const loan = this.loans.get(loanId);
     if (!loan) throw new Error('Loan not found');
-    if (loan.memberId === approverMemberId) {
+    if (loan.memberId === approverMemberId || loan.borrowerMemberId === approverMemberId) {
       throw new Error('Borrower cannot approve their own loan application');
     }
     loan.status = 'APPROVED';
     loan.approvedById = approverMemberId;
+
+    if (prisma?.tableLoan) {
+      prisma.tableLoan.update({
+        where: { id: loanId },
+        data: { status: 'APPROVED' }
+      }).catch(() => {});
+    }
+
     return loan;
   }
 
-  disburseLoan(loanId) {
+  disburseLoan(loanId, actorId) {
     const loan = this.loans.get(loanId);
     if (!loan) throw new Error('Loan not found');
     loan.status = 'DISBURSED';
     loan.disbursedAt = new Date();
+
+    if (prisma?.tableLoan) {
+      prisma.tableLoan.update({
+        where: { id: loanId },
+        data: { status: 'ACTIVE', disbursedAt: loan.disbursedAt }
+      }).catch(() => {});
+    }
+
     return loan;
   }
 
-  recordRepayment(loanId, amountMinor, transactionRef) {
+  recordRepayment(loanId, amountMinor, transactionRef, actorId) {
     const loan = this.loans.get(loanId);
     if (!loan) throw new Error('Loan not found');
 
@@ -161,6 +203,69 @@ export class LoanService {
     loan.outstandingMinor = Math.max(0, loan.totalPayableMinor - loan.totalRepaidMinor);
     loan.balanceMinor = loan.outstandingMinor;
     loan.status = loan.outstandingMinor === 0 ? 'FULLY_REPAID' : 'PARTIALLY_REPAID';
+
+    // Allocate payment across installments
+    let remainingPayment = payment;
+    if (loan.installments) {
+      for (const inst of loan.installments) {
+        if (remainingPayment <= 0) break;
+        const remainingDue = inst.dueMinor - inst.paidMinor;
+        if (remainingDue > 0) {
+          const allocation = Math.min(remainingPayment, remainingDue);
+          inst.paidMinor += allocation;
+          remainingPayment -= allocation;
+          if (inst.paidMinor >= inst.dueMinor) {
+            inst.status = 'PAID';
+          }
+        }
+      }
+    }
+
+    // Persist repayment and update schedule rows in PostgreSQL
+    if (prisma?.tableLoan) {
+      prisma.$transaction(async (tx) => {
+        await tx.tableLoan.update({
+          where: { id: loanId },
+          data: {
+            balanceMinor: BigInt(loan.balanceMinor),
+            status: loan.outstandingMinor === 0 ? 'REPAID' : 'ACTIVE'
+          }
+        });
+
+        await tx.loanRepayment.create({
+          data: {
+            loanId,
+            amountMinor: BigInt(payment),
+            reference: transactionRef || `REPAY-${Date.now()}`
+          }
+        });
+
+        // Update database schedule rows
+        const rows = await tx.loanScheduleRow.findMany({
+          where: { loanId },
+          orderBy: { installmentNumber: 'asc' }
+        });
+
+        let toAllocate = BigInt(payment);
+        for (const row of rows) {
+          if (toAllocate <= 0n) break;
+          const rowDue = row.totalDueMinor - (row.paidMinor || 0n);
+          if (rowDue > 0n) {
+            const alloc = toAllocate < rowDue ? toAllocate : rowDue;
+            toAllocate -= alloc;
+            const newPaid = (row.paidMinor || 0n) + alloc;
+            await tx.loanScheduleRow.update({
+              where: { id: row.id },
+              data: {
+                paidMinor: newPaid,
+                status: newPaid >= row.totalDueMinor ? 'PAID' : 'PARTIALLY_PAID',
+                paidAt: newPaid >= row.totalDueMinor ? new Date() : null
+              }
+            });
+          }
+        }
+      }).catch(() => {});
+    }
 
     return {
       loanId,

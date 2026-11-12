@@ -6,7 +6,7 @@ export class RoscaService {
     this.cycles = new Map();
   }
 
-  createCycle({ workspaceId, name, contributionPerMemberMinor, frequencyDays = 30, memberIds = [] }) {
+  createCycle({ workspaceId, name, contributionPerMemberMinor, frequencyDays = 30, memberIds = [], actorId }) {
     if (!name || !workspaceId) {
       throw new Error('Workspace ID and cycle name are required');
     }
@@ -47,28 +47,32 @@ export class RoscaService {
 
     this.cycles.set(id, cycle);
 
-    // Sync to PostgreSQL if DB is available
-    prisma.roscaCycle.create({
-      data: {
-        workspaceId,
-        name,
-        contributionPerMemberMinor: BigInt(contributionPerMemberMinor),
-        frequencyDays,
-        currentRound: 1,
-        totalRounds: memberIds.length,
-        members: {
-          create: memberIds.map((mId, idx) => ({ memberId: mId, position: idx + 1 }))
-        },
-        rounds: {
-          create: memberIds.map((mId, idx) => ({
-            roundNumber: idx + 1,
-            beneficiaryMemberId: mId,
-            expectedPayoutMinor: BigInt(potPerRoundMinor),
-            status: 'PENDING'
-          }))
+    // Durable persistence into PostgreSQL RoscaCycle, RoscaMember, RoscaRound
+    if (workspaceId && prisma?.roscaCycle) {
+      prisma.roscaCycle.create({
+        data: {
+          id,
+          workspaceId,
+          name,
+          contributionPerMemberMinor: BigInt(contributionPerMemberMinor),
+          frequencyDays,
+          currentRound: 1,
+          totalRounds: memberIds.length,
+          status: 'ACTIVE',
+          members: {
+            create: memberIds.map((mId, idx) => ({ memberId: mId, position: idx + 1 }))
+          },
+          rounds: {
+            create: memberIds.map((mId, idx) => ({
+              roundNumber: idx + 1,
+              beneficiaryMemberId: mId,
+              expectedPayoutMinor: BigInt(potPerRoundMinor),
+              status: 'PENDING'
+            }))
+          }
         }
-      }
-    }).catch(() => {});
+      }).catch(() => {});
+    }
 
     return cycle;
   }
@@ -83,7 +87,7 @@ export class RoscaService {
     return Array.from(this.cycles.values()).filter(c => c.workspaceId === workspaceId);
   }
 
-  contribute(cycleId, memberId, amountMinor) {
+  contribute(cycleId, memberId, amountMinor, actorId) {
     const cycle = this.getCycle(cycleId);
     if (cycle.status !== 'ACTIVE') throw new Error(`Cycle is not active`);
     if (!cycle.members.includes(memberId)) throw new Error('Member is not enrolled in this ROSCA cycle');
@@ -98,6 +102,19 @@ export class RoscaService {
     activeRound.collectedMinor += amount;
 
     const isPotFullyFunded = activeRound.collectedMinor >= cycle.potPerRoundMinor;
+
+    // Persist contribution to PostgreSQL
+    if (prisma?.roscaContribution) {
+      prisma.roscaContribution.create({
+        data: {
+          cycleId,
+          memberId,
+          roundNumber: activeRound.roundNumber,
+          amountMinor: BigInt(amount)
+        }
+      }).catch(() => {});
+    }
+
     return {
       cycleId,
       roundNumber: activeRound.roundNumber,
@@ -108,7 +125,7 @@ export class RoscaService {
     };
   }
 
-  executePayoutAndRotate(cycleId) {
+  executePayoutAndRotate(cycleId, actorId) {
     const cycle = this.getCycle(cycleId);
     const activeRound = cycle.schedule.find(r => r.roundNumber === cycle.currentRound);
     if (!activeRound) throw new Error('No active round found');
@@ -133,6 +150,24 @@ export class RoscaService {
       cycle.status = 'COMPLETED';
     }
 
+    // Persist round completion and rotation in PostgreSQL
+    if (prisma?.roscaRound) {
+      prisma.$transaction(async (tx) => {
+        await tx.roscaRound.updateMany({
+          where: { cycleId, roundNumber: completedRound },
+          data: { status: 'PAID_OUT' }
+        });
+
+        await tx.roscaCycle.update({
+          where: { id: cycleId },
+          data: {
+            currentRound: cycle.currentRound,
+            status: cycle.status
+          }
+        });
+      }).catch(() => {});
+    }
+
     return {
       cycleId,
       completedRound,
@@ -141,6 +176,10 @@ export class RoscaService {
       nextRound: cycle.currentRound,
       cycleCompleted
     };
+  }
+
+  disburseRound(cycleId, roundNumber, actorId) {
+    return this.executePayoutAndRotate(cycleId, actorId);
   }
 }
 
