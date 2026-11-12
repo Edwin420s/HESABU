@@ -184,3 +184,45 @@ Authentication: All protected endpoints require `Authorization: Bearer <access-t
     - `ExpenseAgent`: Anomaly detection, duplicate claims, threshold breaches
 - `GET /workspaces/:workspaceId/agent/reconcile`
   - Evaluates automated settlement matching and double-entry trial balance
+- `GET /workspaces/:workspaceId/agent/collections`
+  - Returns collections breakdown, debtor accounts, and overdue receivables
+- `GET /workspaces/:workspaceId/agent/treasury`
+  - Returns net cash balances per currency and upcoming liabilities
+- `GET /workspaces/:workspaceId/agent/expense-audit`
+  - Audits expense submissions for duplicate claims and threshold violations
+- `GET /workspaces/:workspaceId/agent/tools`
+  - Returns the strongly-typed Agent Tool Registry with JSON schema parameter specifications and role permissions
+- `POST /workspaces/:workspaceId/agent/tools/execute`
+  - Body: `{ toolName }` (one of `collect_receivables`, `reconcile_ledger`, `forecast_treasury`, `audit_expenses`)
+  - Enforces RBAC permissions, runs the agent tool, and persists an audit log record
+
+---
+
+## 13. South Africa PayShap & Real-Time EFT Endpoints
+
+- `POST /payments/payshap-webhook`
+  - Header: `x-payshap-signature: <hmac-sha256>`
+  - Body: `{ referenceNumber, providerTransactionId, amountMinor, status, payerBank, bankRef }`
+  - Unauthenticated endpoint validating cryptographic HMAC-SHA256 signature against webhook secret, enforcing terminal status (`SETTLED`), exact amount matching, and posting to double-entry ledger with anti-replay protection
+- `POST /payments/:id/payshap-confirm`
+  - Body: `{ clearingRef, bankName?, auditReason }`
+  - Restricted to Owners, Admins, or Finance Managers; registers manual clearance with mandatory audit rationale and anti-replay protection
+
+---
+
+## 14. Invoicing Partial Settlements & Credit Notes
+
+- `POST /invoices/:id/settle`
+  - Body: `{ paymentRef?, rail?, amount? }`
+  - Settles full or partial balance of an invoice; creates `InvoiceAllocation`, updates `paidMinor`, and manages `PARTIALLY_PAID` vs `PAID` status transitions
+- `POST /invoices/:id/allocate-payment`
+  - Body: `{ paymentId, amount? }`
+  - Allocates an already confirmed payment to an invoice, persisting an `InvoiceAllocation` record
+- `POST /workspaces/:workspaceId/invoices/:id/credit-notes`
+  - Body: `{ reason, lines: [{ description, quantity, unitPrice }] }`
+  - Issues formal credit note against an open invoice, creating `CreditNote` and `CreditNoteLine` records and posting GAAP counter-entry to Revenue and AR
+- `GET /workspaces/:workspaceId/credit-notes`
+  - Lists all credit notes issued in the workspace
+- `GET /credit-notes/:id`
+  - Retrieves a specific credit note with line items and invoice relations
+
