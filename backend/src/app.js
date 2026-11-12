@@ -19,6 +19,9 @@ import { roscaRouter } from './modules/rosca/rosca.routes.js';
 import { loanRouter } from './modules/loans/loan.routes.js';
 import { budgetRouter } from './modules/budget/budget.routes.js';
 import { reportsRouter } from './modules/reports/reports.routes.js';
+import { invoicingRouter } from './modules/invoicing/invoicing.routes.js';
+import { billsRouter } from './modules/bills/bills.routes.js';
+import { procurementRouter } from './modules/procurement/procurement.routes.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 
 import { prisma } from './config/prisma.js';
@@ -64,6 +67,9 @@ app.use('/api', roscaRouter);
 app.use('/api', loanRouter);
 app.use('/api', budgetRouter);
 app.use('/api', reportsRouter);
+app.use('/api', invoicingRouter);
+app.use('/api', billsRouter);
+app.use('/api', procurementRouter);
 
 app.use(notFound);
 app.use(errorHandler);
