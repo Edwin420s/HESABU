@@ -151,6 +151,8 @@ export function formatCurrencyDisplay(valueMinor, currency = 'KES') {
   return `${conf.symbol} ${displayWhole}.${fraction}`;
 }
 
+export const money = formatCurrencyDisplay;
+
 /**
  * Ratio multiplication using BigInt: (amountMinor * numerator) / denominator with half-up rounding.
  */
