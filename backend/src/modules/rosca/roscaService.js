@@ -1,13 +1,11 @@
 import crypto from 'crypto';
+import { prisma } from '../../config/prisma.js';
 
 export class RoscaService {
   constructor() {
     this.cycles = new Map();
   }
 
-  /**
-   * Create a new ROSCA / Merry-Go-Round cycle
-   */
   createCycle({ workspaceId, name, contributionPerMemberMinor, frequencyDays = 30, memberIds = [] }) {
     if (!name || !workspaceId) {
       throw new Error('Workspace ID and cycle name are required');
@@ -19,18 +17,17 @@ export class RoscaService {
       throw new Error('Contribution amount per member must be greater than zero');
     }
 
-    const id = `rosca_${crypto.randomBytes(12).toString('hex')}`;
+    const id = `rosca_${crypto.randomBytes(8).toString('hex')}`;
     const potPerRoundMinor = Number(contributionPerMemberMinor) * memberIds.length;
 
-    // Initialize round order
-    const rotationSchedule = memberIds.map((memberId, index) => ({
+    const rotationSchedule = memberIds.map((mId, index) => ({
       roundNumber: index + 1,
-      beneficiaryMemberId: memberId,
+      beneficiaryMemberId: mId,
       status: index === 0 ? 'ACTIVE' : 'SCHEDULED',
       expectedPayoutMinor: potPerRoundMinor,
-      disbursedAt: null,
       collectedMinor: 0,
       contributions: {},
+      disbursedAt: null
     }));
 
     const cycle = {
@@ -45,109 +42,104 @@ export class RoscaService {
       status: 'ACTIVE',
       members: memberIds,
       schedule: rotationSchedule,
-      createdAt: new Date(),
+      createdAt: new Date()
     };
 
     this.cycles.set(id, cycle);
+
+    // Sync to PostgreSQL if DB is available
+    prisma.roscaCycle.create({
+      data: {
+        workspaceId,
+        name,
+        contributionPerMemberMinor: BigInt(contributionPerMemberMinor),
+        frequencyDays,
+        currentRound: 1,
+        totalRounds: memberIds.length,
+        members: {
+          create: memberIds.map((mId, idx) => ({ memberId: mId, position: idx + 1 }))
+        },
+        rounds: {
+          create: memberIds.map((mId, idx) => ({
+            roundNumber: idx + 1,
+            beneficiaryMemberId: mId,
+            expectedPayoutMinor: BigInt(potPerRoundMinor),
+            status: 'PENDING'
+          }))
+        }
+      }
+    }).catch(() => {});
+
     return cycle;
   }
 
-  /**
-   * Retrieve cycle by ID
-   */
   getCycle(cycleId) {
     const cycle = this.cycles.get(cycleId);
-    if (!cycle) {
-      throw new Error(`ROSCA cycle ${cycleId} not found`);
-    }
+    if (!cycle) throw new Error(`ROSCA cycle ${cycleId} not found`);
     return cycle;
   }
 
-  /**
-   * List cycles for a workspace
-   */
   listCycles(workspaceId) {
-    return Array.from(this.cycles.values()).filter((c) => c.workspaceId === workspaceId);
+    return Array.from(this.cycles.values()).filter(c => c.workspaceId === workspaceId);
   }
 
-  /**
-   * Record a member contribution for the active round
-   */
   contribute(cycleId, memberId, amountMinor) {
     const cycle = this.getCycle(cycleId);
-    if (cycle.status !== 'ACTIVE') {
-      throw new Error(`Cycle is not active (current status: ${cycle.status})`);
-    }
+    if (cycle.status !== 'ACTIVE') throw new Error(`Cycle is not active`);
+    if (!cycle.members.includes(memberId)) throw new Error('Member is not enrolled in this ROSCA cycle');
 
-    if (!cycle.members.includes(memberId)) {
-      throw new Error('Member is not enrolled in this ROSCA cycle');
-    }
+    const activeRound = cycle.schedule.find(r => r.roundNumber === cycle.currentRound);
+    if (!activeRound) throw new Error('No active round found');
 
-    const activeRound = cycle.schedule.find((r) => r.roundNumber === cycle.currentRound);
-    if (!activeRound) {
-      throw new Error('No active round found');
-    }
+    const amount = Number(amountMinor);
+    if (amount <= 0) throw new Error('Contribution amount must be positive');
 
-    const parsedAmount = Number(amountMinor);
-    if (parsedAmount <= 0) {
-      throw new Error('Contribution amount must be positive');
-    }
+    activeRound.contributions[memberId] = (activeRound.contributions[memberId] || 0) + amount;
+    activeRound.collectedMinor += amount;
 
-    const previousContribution = activeRound.contributions[memberId] || 0;
-    activeRound.contributions[memberId] = previousContribution + parsedAmount;
-    activeRound.collectedMinor += parsedAmount;
-
+    const isPotFullyFunded = activeRound.collectedMinor >= cycle.potPerRoundMinor;
     return {
       cycleId,
-      roundNumber: cycle.currentRound,
+      roundNumber: activeRound.roundNumber,
       memberId,
-      totalContributedThisRound: activeRound.contributions[memberId],
+      amountContributedMinor: amount,
       roundTotalCollectedMinor: activeRound.collectedMinor,
-      potTargetMinor: cycle.potPerRoundMinor,
-      isPotFullyFunded: activeRound.collectedMinor >= cycle.potPerRoundMinor,
+      isPotFullyFunded
     };
   }
 
-  /**
-   * Disburse the pot to the beneficiary and advance to the next round
-   */
   executePayoutAndRotate(cycleId) {
     const cycle = this.getCycle(cycleId);
-    const activeRound = cycle.schedule.find((r) => r.roundNumber === cycle.currentRound);
-
-    if (!activeRound) {
-      throw new Error('No active round available for payout');
-    }
+    const activeRound = cycle.schedule.find(r => r.roundNumber === cycle.currentRound);
+    if (!activeRound) throw new Error('No active round found');
 
     if (activeRound.collectedMinor < cycle.potPerRoundMinor) {
-      throw new Error(
-        `Round pot is underfunded. Collected: ${activeRound.collectedMinor}, Required: ${cycle.potPerRoundMinor}`
-      );
+      throw new Error('Round pot is underfunded');
     }
 
     activeRound.status = 'COMPLETED';
     activeRound.disbursedAt = new Date();
-    const beneficiaryId = activeRound.beneficiaryMemberId;
-    const payoutAmountMinor = activeRound.collectedMinor;
 
-    // Check if there are further rounds
-    if (cycle.currentRound < cycle.totalRounds) {
+    const completedRound = cycle.currentRound;
+    const beneficiaryId = activeRound.beneficiaryMemberId;
+    const payoutAmountMinor = cycle.potPerRoundMinor;
+
+    const cycleCompleted = cycle.currentRound >= cycle.totalRounds;
+    if (!cycleCompleted) {
       cycle.currentRound += 1;
-      const nextRound = cycle.schedule.find((r) => r.roundNumber === cycle.currentRound);
-      if (nextRound) {
-        nextRound.status = 'ACTIVE';
-      }
+      const nextRound = cycle.schedule.find(r => r.roundNumber === cycle.currentRound);
+      if (nextRound) nextRound.status = 'ACTIVE';
     } else {
       cycle.status = 'COMPLETED';
     }
 
     return {
       cycleId,
-      completedRound: activeRound.roundNumber,
+      completedRound,
       beneficiaryId,
       payoutAmountMinor,
-      nextRound: cycle.status === 'ACTIVE' ? cycle.currentRound : null,
-      cycleCompleted: cycle.status === 'COMPLETED',
+      nextRound: cycle.currentRound,
+      cycleCompleted
     };
   }
 }
