@@ -200,6 +200,7 @@ model Workspace {
   fxConversions          FXConversion[]
   reconciliationCases    ReconciliationCase[]
   providerEvents         ProviderEvent[]
+  creditNotes            CreditNote[]
 }
 
 model Membership {
@@ -304,6 +305,7 @@ model Payment {
   invoice            Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   settlement         Settlement?
   providerEvents     ProviderEvent[]
+  allocations        InvoiceAllocation[]
 
   @@index([workspaceId, status])
   @@index([checkoutRequestId])
@@ -342,6 +344,7 @@ model Settlement {
   obligation   Obligation?        @relation(fields: [obligationId], references: [id])
   invoice      Invoice?           @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   payment      Payment            @relation(fields: [paymentId], references: [id])
+  allocations  InvoiceAllocation[]
   reconciliationCase ReconciliationCase?
 }
 
@@ -556,6 +559,7 @@ model Invoice {
   subtotalMinor       BigInt
   taxMinor            BigInt               @default(0)
   totalMinor          BigInt
+  paidMinor           BigInt               @default(0)
   status              InvoiceStatus        @default(DRAFT)
   notes               String?
   createdAt           DateTime             @default(now())
@@ -566,6 +570,8 @@ model Invoice {
   obligations         Obligation[]
   settlements         Settlement[]
   payments            Payment[]
+  allocations         InvoiceAllocation[]
+  creditNotes         CreditNote[]
   reconciliationCases ReconciliationCase[]
 
   @@unique([workspaceId, invoiceNumber])
@@ -692,6 +698,7 @@ model TableLoan {
   updatedAt           DateTime         @updatedAt
   workspace           Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   repayments          LoanRepayment[]
+  scheduleRows        LoanScheduleRow[]
 
   @@index([workspaceId, status])
 }
@@ -763,4 +770,66 @@ model FXConversion {
   quote             FXQuote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId])
+}
+
+model InvoiceAllocation {
+  id           String      @id @default(cuid())
+  invoiceId    String
+  settlementId String?
+  paymentId    String?
+  amountMinor  BigInt
+  notes        String?
+  createdAt    DateTime    @default(now())
+  invoice      Invoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  settlement   Settlement? @relation(fields: [settlementId], references: [id], onDelete: SetNull)
+  payment      Payment?    @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+  @@index([settlementId])
+}
+
+model CreditNote {
+  id               String           @id @default(cuid())
+  workspaceId      String
+  invoiceId        String?
+  creditNoteNumber String
+  reason           String
+  currency         String           @default("KES")
+  subtotalMinor    BigInt
+  taxMinor         BigInt           @default(0)
+  totalMinor       BigInt
+  status           String           @default("ISSUED")
+  createdAt        DateTime         @default(now())
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invoice          Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  lines            CreditNoteLine[]
+
+  @@unique([workspaceId, creditNoteNumber])
+  @@index([workspaceId])
+}
+
+model CreditNoteLine {
+  id           String     @id @default(cuid())
+  creditNoteId String
+  description  String
+  amountMinor  BigInt
+  creditNote   CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+}
+
+model LoanScheduleRow {
+  id                 String    @id @default(cuid())
+  loanId             String
+  installmentNumber  Int
+  dueDate            DateTime
+  principalDueMinor  BigInt
+  interestDueMinor   BigInt
+  totalDueMinor      BigInt
+  principalPaidMinor BigInt    @default(0)
+  interestPaidMinor  BigInt    @default(0)
+  status             String    @default("PENDING")
+  paidAt             DateTime?
+  loan               TableLoan @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  @@unique([loanId, installmentNumber])
+  @@index([loanId, status])
 }
