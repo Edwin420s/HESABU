@@ -1,4 +1,4 @@
-# API Specification
+# HESABU API Specification
 
 Base URL: `/api`
 
@@ -19,14 +19,15 @@ Authentication: All protected endpoints require `Authorization: Bearer <access-t
 
 ---
 
-## 2. Workspaces and Membership
+## 2. Workspaces and Multi-Market Tenancy
 
 - `GET /workspaces`
-  - Lists all workspaces accessible by the authenticated user
+  - Lists all workspaces accessible by the authenticated user with role and profile
 - `POST /workspaces`
-  - Body: `{ name, type: "PERSONAL" | "GROUP" | "ORGANISATION", currency }`
+  - Body: `{ name, type: "PERSONAL" | "GROUP" | "ORGANISATION", currency: "KES" | "ZAR" | "USD" | "EUR" }`
+  - Initializes workspace with GAAP chart of accounts and default tenant currency
 - `GET /workspaces/:workspaceId`
-  - Returns workspace metadata and active member list
+  - Returns workspace metadata, profile, country (`KE` or `ZA`), and member list
 - `POST /workspaces/:workspaceId/members`
   - Body: `{ email, role: "MEMBER" | "APPROVER" | "FINANCE_MANAGER" | "AUDITOR" | "ADMIN" }`
 - `DELETE /workspaces/:workspaceId/members/:memberId`
@@ -34,10 +35,10 @@ Authentication: All protected endpoints require `Authorization: Bearer <access-t
 
 ---
 
-## 3. Contributions and Obligations
+## 3. Contributions and Persistent Obligations
 
 - `GET /workspaces/:workspaceId/obligations`
-  - Lists obligations in the workspace with current settlement status
+  - Lists obligations in the workspace with current settlement status and remaining balance
 - `POST /workspaces/:workspaceId/obligations`
   - Body: `{ title, memberName, amount, description?, memberEmail?, dueAt?, campaignId? }`
 - `POST /obligations/:id/cancel`
@@ -57,109 +58,129 @@ Authentication: All protected endpoints require `Authorization: Bearer <access-t
 
 ---
 
-## 5. Expenses and Multi-Member Splits
+## 5. Commercial Invoicing & Accounts Receivable (Layer 4)
 
-- `GET /workspaces/:workspaceId/expenses`
-  - Lists expenses with current approval status and split allocations
-- `POST /workspaces/:workspaceId/expenses`
-  - Body: `{ title, category, amount, description?, receiptUrl?, splits?: [{ memberId, shareMinor }] }`
-- `POST /expenses/:id/approve`
-  - Approves a submitted expense (enforcing separation of duties)
-- `POST /expenses/:id/reject`
-  - Body: `{ note }`
-- `POST /expenses/:id/pay`
-  - Records payout for an approved expense and posts balanced entries to the double-entry journal
-
----
-
-## 6. Member Reimbursements
-
-- `GET /workspaces/:workspaceId/reimbursements`
-  - Lists out-of-pocket reimbursement claims
-- `POST /workspaces/:workspaceId/reimbursements`
-  - Body: `{ title, description?, category, amountMinor, receiptUrl? }`
-- `POST /reimbursements/:id/approve`
-  - Approves a submitted claim
-- `POST /reimbursements/:id/reject`
-  - Body: `{ reason }`
-- `POST /reimbursements/:id/pay`
-  - Disburses approved claim and posts balanced ledger lines (`DR 5050`, `CR 1000`)
+- `GET /workspaces/:workspaceId/customers`
+  - Lists registered corporate/individual customers
+- `POST /workspaces/:workspaceId/customers`
+  - Body: `{ name, email, phone?, taxId?, address?, notes? }`
+  - Registers a customer for B2B billing
+- `GET /workspaces/:workspaceId/invoices`
+  - Lists commercial invoices with line items and settlement state
+- `POST /workspaces/:workspaceId/invoices`
+  - Body: `{ customerId, invoiceNumber, dueDate, lines: [{ description, quantity, unitPrice }] }`
+  - Computes subtotal, VAT/tax, issues invoice, and posts GAAP Accounts Receivable (`1200`) accrual journal
+- `POST /invoices/:id/settle`
+  - Body: `{ rail: "MPESA" | "STELLAR" | "PAYSHAP_EFT" | "DEVELOPMENT", paymentRef? }`
+  - Settles invoice, credits AR (`1200`), debits cash/bank clearing (`1000`/`1030`)
 
 ---
 
-## 7. Recurring Dues Schedules
+## 6. Supplier Bills & Accounts Payable (Layer 4)
 
-- `GET /workspaces/:workspaceId/recurring`
-  - Lists configured recurring dues schedules
-- `POST /workspaces/:workspaceId/recurring`
-  - Body: `{ title, amountMinor, interval: "WEEKLY" | "MONTHLY" | "QUARTERLY" | "ANNUALLY", nextRunAt }`
-- `POST /recurring/:id/trigger`
-  - Immediately executes the recurring billing cycle, generating obligations for all workspace members
+- `GET /workspaces/:workspaceId/suppliers`
+  - Lists registered suppliers and bank settlement details
+- `POST /workspaces/:workspaceId/suppliers`
+  - Body: `{ name, email, phone?, bankName?, bankAccount?, taxId?, address? }`
+- `GET /workspaces/:workspaceId/bills`
+  - Lists supplier bills by approval and payment status
+- `POST /workspaces/:workspaceId/bills`
+  - Body: `{ supplierId, billNumber, amount, category, dueDate, notes? }`
+  - Submits vendor bill for governance review
+- `POST /bills/:id/approve`
+  - Authorizes supplier bill and posts expense accrual to Accounts Payable (`2000`)
+- `POST /bills/:id/pay`
+  - Body: `{ rail: "PAYSHAP_EFT" | "MPESA" | "STELLAR", paymentRef? }`
+  - Disburses supplier payment, debits AP (`2000`), credits cash/bank (`1000`/`1030`)
 
 ---
 
-## 8. Payments and Multi-Rail Settlements
+## 7. Procurement & Purchase Requests (Layer 4)
 
-- `GET /workspaces/:workspaceId/payments`
-  - Lists payment attempts and settlement verification details
+- `GET /workspaces/:workspaceId/purchase-requests`
+  - Lists procurement requests with requester details and status
+- `POST /workspaces/:workspaceId/purchase-requests`
+  - Body: `{ title, description?, amount, department }`
+- `POST /purchase-requests/:id/review`
+  - Body: `{ decision: "APPROVED" | "REJECTED", note? }`
+  - Enforces segregation of duties (requester cannot approve own request) and spending limits
+
+---
+
+## 8. Multi-Rail Payments & Settlements
+
 - `POST /obligations/:id/payments`
-  - Body: `{ rail: "STELLAR" | "MPESA" | "DEVELOPMENT", phoneNumber?, idempotencyKey? }`
-  - Initiates a pending payment attempt
-- `POST /payments/:id/stellar-confirm`
-  - Body: `{ txHash }`
-  - Validates on-chain Stellar transaction via Horizon API and posts to journal
+  - Body: `{ rail: "MPESA" | "STELLAR" | "PAYSHAP_EFT" | "DEVELOPMENT", phoneNumber?, destinationAccount? }`
+  - Initiates payment attempt in pending status prior to external verification
 - `POST /payments/:id/mpesa-confirm`
-  - Body: `{ receiptNumber }`
-  - Confirms Safaricom M-Pesa receipt reference and posts to journal
+  - Safaricom Daraja STK Push trigger
 - `POST /payments/mpesa-callback`
-  - Public webhook handler processing asynchronous Daraja STK Push responses
-- `POST /payments/:id/dev-confirm`
-  - Sandbox confirmation for local testing and demonstration
+  - Validates callback amount, phone, ResultCode, saves receipt number and checkout ID
+- `POST /payments/:id/stellar-confirm`
+  - Body: `{ txHash, destinationAccount, memo? }`
+  - Strict Horizon verification of destination account, asset code, issuer, memo, and amount
+- `POST /payments/:id/payshap-confirm`
+  - South African immediate bank clearing confirmation
+- `POST /payments/:id/claim-manual`
+  - Role-restricted manual confirmation (Owner/Admin only) with mandatory audit justification
 
 ---
 
-## 9. Double-Entry General Ledger
+## 9. Merry-Go-Round (ROSCA) & Table Banking Loans
 
-- `GET /workspaces/:workspaceId/journal`
-  - Lists posted balanced journal entries with debit and credit lines
-- `POST /journal/:id/reverse`
-  - Body: `{ reason }`
-  - Generates a balanced reversing journal entry referencing the original record
-
----
-
-## 10. Financial Statements and Reports
-
-- `GET /workspaces/:workspaceId/reports/trial-balance`
-  - Returns debit, credit, and net balances per account code, verifying ledger equality
-- `GET /workspaces/:workspaceId/reports/income-statement`
-  - Returns recognized revenue, total operating expenses, and net surplus or deficit
-- `GET /workspaces/:workspaceId/reports/ledger.csv`
-  - Exports a CSV file containing all posted journal lines for external review
+- `GET /workspaces/:workspaceId/rosca/cycles`
+  - Lists rotating cycles, round payouts, and membership positions
+- `POST /workspaces/:workspaceId/rosca/cycles`
+  - Body: `{ name, contributionPerMemberMinor, frequencyDays, memberIds: [] }`
+- `POST /rosca/cycles/:cycleId/rounds/:roundNumber/payout`
+  - Executes pot disbursement to round beneficiary with double-entry journal posting
+- `GET /workspaces/:workspaceId/loans`
+  - Lists table banking loans with repayment schedules
+- `POST /workspaces/:workspaceId/loans/apply`
+  - Body: `{ borrowerMemberId, principalMinor, durationMonths, interestRateAnnual, interestType: "FLAT" | "REDUCING_BALANCE" }`
+- `POST /loans/:loanId/approve`
+  - Approves and disburses table banking loan
+- `POST /loans/:loanId/repayments`
+  - Records loan principal + interest repayment
 
 ---
 
-## 11. Statement Anchors
+## 10. Multi-Currency FX & Cross-Border Conversions
 
-- `GET /workspaces/:workspaceId/anchors`
-  - Lists cryptographic period anchors
+- `GET /fx/rates`
+  - Mid-market exchange rates for KES, ZAR, USD, EUR, GBP, UGX, TZS
+- `POST /fx/convert`
+  - Body: `{ amountMinor, fromCurrency, toCurrency, spreadPercentage? }`
+  - Exact minor-unit cross-rate conversion
+- `POST /workspaces/:workspaceId/fx/quote`
+  - Issues time-locked institutional conversion quote persisted to PostgreSQL
+- `POST /workspaces/:workspaceId/fx/execute`
+  - Body: `{ quoteRef, settlementRef? }`
+  - Locks and executes FX trade, posting multi-currency balanced journal entries
+
+---
+
+## 11. Statement Anchors & Cryptographic Audit Verification
+
 - `POST /workspaces/:workspaceId/anchors/generate`
   - Body: `{ periodStart, periodEnd }`
-  - Computes and records a canonical SHA-256 Merkle root across journal entries in the window
+  - Canonicalizes all period journal entries, constructs binary Merkle tree, and produces 32-byte SHA-256 Merkle root
+- `GET /workspaces/:workspaceId/anchors`
+  - Lists generated cryptographic anchors
+- `POST /workspaces/:workspaceId/anchors/verify-leaf`
+  - Body: `{ journalEntryId, anchorId }`
+  - Computes inclusion proof and validates leaf hash against immutable Merkle root
 
 ---
 
-## 12. Autonomous Financial Copilot
+## 12. Agentic Finance Copilot (Layer 3)
 
 - `POST /workspaces/:workspaceId/agent/query`
   - Body: `{ query }`
-  - Returns natural language answer, financial data context, and suggested follow-ups
+  - Routes natural language questions to specialized subagents:
+    - `CollectionsAgent`: Overdue balances, remaining debt, reminder drafts
+    - `ReconciliationAgent`: Ledger integrity, unmatched settlements, currency balances
+    - `TreasuryAgent`: Liquidity forecasting, upcoming AP commitments, cash runway
+    - `ExpenseAgent`: Anomaly detection, duplicate claims, threshold breaches
 - `GET /workspaces/:workspaceId/agent/reconcile`
-  - Returns reconciliation status, totals, and proactive action items
-
----
-
-## 13. Audit Trail
-
-- `GET /workspaces/:workspaceId/audit`
-  - Returns immutable audit logs with timestamp, action type, entity, and actor
+  - Evaluates automated settlement matching and double-entry trial balance
