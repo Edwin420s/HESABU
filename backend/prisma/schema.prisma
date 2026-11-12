@@ -15,6 +15,17 @@ enum WorkspaceType {
   ORGANISATION
 }
 
+enum WorkspaceProfile {
+  GROUP
+  BUSINESS
+  ORGANISATION
+}
+
+enum WorkspaceCountry {
+  KE
+  ZA
+}
+
 enum WorkspaceRole {
   OWNER
   ADMIN
@@ -37,12 +48,14 @@ enum PaymentStatus {
   CONFIRMED
   FAILED
   EXPIRED
+  DISPUTED
 }
 
 enum PaymentRail {
   DEVELOPMENT
   STELLAR
   MPESA
+  PAYSHAP_EFT
   OTHER
 }
 
@@ -59,6 +72,82 @@ enum JournalStatus {
   REVERSED
 }
 
+enum JournalSide {
+  DEBIT
+  CREDIT
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum BillStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum PurchaseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FULFILLED
+}
+
+enum RoscaCycleStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum RoscaRoundStatus {
+  PENDING
+  FUNDED
+  PAID_OUT
+}
+
+enum LoanStatus {
+  PENDING
+  APPROVED
+  ACTIVE
+  REPAID
+  DEFAULTED
+  REJECTED
+}
+
+enum LoanInterestType {
+  FLAT
+  REDUCING_BALANCE
+}
+
+enum ReconStatus {
+  MATCHED
+  UNRESOLVED
+  DISCREPANCY
+  IGNORED
+}
+
+enum FXQuoteStatus {
+  ACTIVE
+  LOCKED
+  EXECUTED
+  EXPIRED
+}
+
 model User {
   id                String            @id @default(cuid())
   name              String
@@ -69,14 +158,20 @@ model User {
   memberships       Membership[]
   createdWorkspaces Workspace[]       @relation("WorkspaceCreator")
   auditLogs         AuditLog[]
+  purchaseRequests  PurchaseRequest[]
 }
 
 model Workspace {
   id                     String              @id @default(cuid())
   name                   String
   type                   WorkspaceType       @default(GROUP)
+  profile                WorkspaceProfile    @default(GROUP)
+  country                WorkspaceCountry    @default(KE)
   currency               String              @default("KES")
   spendingThresholdMinor BigInt?
+  taxNumber              String?
+  vatRate                Decimal?            @default(0.16)
+  archived               Boolean             @default(false)
   createdById            String
   createdBy              User                @relation("WorkspaceCreator", fields: [createdById], references: [id])
   createdAt              DateTime            @default(now())
@@ -92,6 +187,19 @@ model Workspace {
   auditLogs              AuditLog[]
   recurringSchedules     RecurringSchedule[]
   statementAnchors       StatementAnchor[]
+  chartOfAccounts        ChartOfAccount[]
+  customers              Customer[]
+  suppliers              Supplier[]
+  invoices               Invoice[]
+  supplierBills          SupplierBill[]
+  purchaseRequests       PurchaseRequest[]
+  roscaCycles            RoscaCycle[]
+  tableLoans             TableLoan[]
+  budgets                Budget[]
+  fxQuotes               FXQuote[]
+  fxConversions          FXConversion[]
+  reconciliationCases    ReconciliationCase[]
+  providerEvents         ProviderEvent[]
 }
 
 model Membership {
@@ -102,9 +210,26 @@ model Membership {
   joinedAt    DateTime      @default(now())
   user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  obligations Obligation[]
 
   @@unique([userId, workspaceId])
   @@index([workspaceId, role])
+}
+
+model ChartOfAccount {
+  id          String      @id @default(cuid())
+  workspaceId String
+  code        String
+  name        String
+  type        AccountType
+  currency    String      @default("KES")
+  description String?
+  isSystem    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, type])
 }
 
 model Campaign {
@@ -128,6 +253,8 @@ model Obligation {
   id          String           @id @default(cuid())
   workspaceId String
   campaignId  String?
+  memberId    String?
+  invoiceId   String?
   title       String
   description String?
   memberName  String
@@ -140,47 +267,103 @@ model Obligation {
   updatedAt   DateTime         @updatedAt
   workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign    Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  member      Membership?      @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  invoice     Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   payments    Payment[]
   settlements Settlement[]
+  reconciliationCases ReconciliationCase[]
 
   @@index([workspaceId, status])
+  @@index([memberId])
 }
 
 model Payment {
-  id             String        @id @default(cuid())
-  workspaceId    String
-  obligationId   String
-  rail           PaymentRail
-  status         PaymentStatus @default(PENDING)
-  amountMinor    BigInt
-  currency       String
-  providerRef    String?       @unique
-  idempotencyKey String        @unique
-  txHash         String?       @unique
-  payerReference String?
-  metadata       Json?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  obligation     Obligation    @relation(fields: [obligationId], references: [id])
-  settlement     Settlement?
+  id                 String           @id @default(cuid())
+  workspaceId        String
+  obligationId       String?
+  invoiceId          String?
+  rail               PaymentRail
+  status             PaymentStatus    @default(PENDING)
+  amountMinor        BigInt
+  currency           String
+  providerRef        String?          @unique
+  merchantRequestId  String?
+  checkoutRequestId  String?          @unique
+  mpesaReceiptNumber String?          @unique
+  destinationAccount String?
+  assetCode          String?
+  assetIssuer        String?
+  idempotencyKey     String           @unique
+  txHash             String?          @unique
+  payerReference     String?
+  metadata           Json?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  workspace          Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  obligation         Obligation?      @relation(fields: [obligationId], references: [id])
+  invoice            Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  settlement         Settlement?
+  providerEvents     ProviderEvent[]
 
   @@index([workspaceId, status])
+  @@index([checkoutRequestId])
+}
+
+model ProviderEvent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  paymentId   String?
+  provider    String
+  eventType   String
+  externalId  String?   @unique
+  payload     Json
+  signature   String?
+  status      String    @default("RECEIVED")
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  payment     Payment?  @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, provider])
 }
 
 model Settlement {
-  id           String      @id @default(cuid())
+  id           String             @id @default(cuid())
   workspaceId  String
-  obligationId String
-  paymentId    String      @unique
+  obligationId String?
+  invoiceId    String?
+  paymentId    String             @unique
   amountMinor  BigInt
   currency     String
   rail         PaymentRail
-  externalRef  String?     @unique
-  verifiedAt   DateTime    @default(now())
-  workspace    Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  obligation   Obligation  @relation(fields: [obligationId], references: [id])
-  payment      Payment     @relation(fields: [paymentId], references: [id])
+  externalRef  String?            @unique
+  verifiedAt   DateTime           @default(now())
+  workspace    Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  obligation   Obligation?        @relation(fields: [obligationId], references: [id])
+  invoice      Invoice?           @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  payment      Payment            @relation(fields: [paymentId], references: [id])
+  reconciliationCase ReconciliationCase?
+}
+
+model ReconciliationCase {
+  id                  String       @id @default(cuid())
+  workspaceId         String
+  status              ReconStatus  @default(UNRESOLVED)
+  settlementId        String?      @unique
+  obligationId        String?
+  invoiceId           String?
+  expectedAmountMinor BigInt?
+  settledAmountMinor  BigInt?
+  discrepancyMinor    BigInt?
+  notes               String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  workspace           Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  settlement          Settlement?  @relation(fields: [settlementId], references: [id], onDelete: SetNull)
+  obligation          Obligation?  @relation(fields: [obligationId], references: [id], onDelete: SetNull)
+  invoice             Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
 }
 
 model Expense {
@@ -249,42 +432,49 @@ model Reimbursement {
 }
 
 model RecurringSchedule {
-  id          String    @id @default(cuid())
-  workspaceId String
-  title       String
-  frequency   String    @default("MONTHLY")
-  amountMinor BigInt
-  currency    String
-  nextRunAt   DateTime
-  active      Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id                String    @id @default(cuid())
+  workspaceId       String
+  title             String
+  frequency         String    @default("MONTHLY")
+  amountMinor       BigInt
+  currency          String
+  nextRunAt         DateTime
+  lastRunAt         DateTime?
+  idempotencyPrefix String?
+  active            Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 }
 
 model StatementAnchor {
-  id             String    @id @default(cuid())
-  workspaceId    String
-  periodStart    DateTime
-  periodEnd      DateTime
-  merkleRootHash String
-  txHash         String?
-  network        String    @default("testnet")
-  createdById    String
-  createdAt      DateTime  @default(now())
-  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id               String    @id @default(cuid())
+  workspaceId      String
+  periodStart      DateTime
+  periodEnd        DateTime
+  merkleRootHash   String
+  txHash           String?
+  network          String    @default("testnet")
+  contractAddress  String?
+  publisherAddress String?
+  status           String    @default("ANCHORED")
+  createdById      String
+  createdAt        DateTime  @default(now())
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 }
 
 model JournalEntry {
-  id                String        @id @default(cuid())
-  workspaceId       String
-  reference         String        @unique
-  description       String
-  status            JournalStatus @default(POSTED)
-  reversedEntryId   String?       @unique
-  postedAt          DateTime      @default(now())
-  workspace         Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  lines             JournalLine[]
+  id              String        @id @default(cuid())
+  workspaceId     String
+  reference       String        @unique
+  description     String
+  status          JournalStatus @default(POSTED)
+  reversedEntryId String?       @unique
+  periodYear      Int?
+  periodMonth     Int?
+  postedAt        DateTime      @default(now())
+  workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lines           JournalLine[]
 }
 
 model JournalLine {
@@ -312,4 +502,265 @@ model AuditLog {
   actor       User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, createdAt])
+}
+
+// -------------------------------------------------------------
+// Layer 4: Business, Invoicing & Accounts Payable Models
+// -------------------------------------------------------------
+model Customer {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  email       String
+  phone       String?
+  taxId       String?
+  address     String?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invoices    Invoice[]
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId])
+}
+
+model Supplier {
+  id          String         @id @default(cuid())
+  workspaceId String
+  name        String
+  email       String
+  phone       String?
+  bankAccount String?
+  bankName    String?
+  taxId       String?
+  address     String?
+  notes       String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  bills       SupplierBill[]
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId])
+}
+
+model Invoice {
+  id                  String               @id @default(cuid())
+  workspaceId         String
+  customerId          String
+  invoiceNumber       String
+  issueDate           DateTime             @default(now())
+  dueDate             DateTime
+  currency            String               @default("KES")
+  subtotalMinor       BigInt
+  taxMinor            BigInt               @default(0)
+  totalMinor          BigInt
+  status              InvoiceStatus        @default(DRAFT)
+  notes               String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer            Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lines               InvoiceLine[]
+  obligations         Obligation[]
+  settlements         Settlement[]
+  payments            Payment[]
+  reconciliationCases ReconciliationCase[]
+
+  @@unique([workspaceId, invoiceNumber])
+  @@index([workspaceId, status])
+}
+
+model InvoiceLine {
+  id             String   @id @default(cuid())
+  invoiceId      String
+  description    String
+  quantity       Decimal  @default(1)
+  unitPriceMinor BigInt
+  amountMinor    BigInt
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model SupplierBill {
+  id           String     @id @default(cuid())
+  workspaceId  String
+  supplierId   String
+  billNumber   String
+  issueDate    DateTime   @default(now())
+  dueDate      DateTime
+  currency     String     @default("KES")
+  amountMinor  BigInt
+  status       BillStatus @default(DRAFT)
+  category     String     @default("OPERATING")
+  receiptUrl   String?
+  notes        String?
+  approvedById String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  workspace    Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  supplier     Supplier   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, billNumber])
+  @@index([workspaceId, status])
+}
+
+model PurchaseRequest {
+  id            String         @id @default(cuid())
+  workspaceId   String
+  requestedById String
+  title         String
+  description   String?
+  amountMinor   BigInt
+  currency      String         @default("KES")
+  department    String         @default("GENERAL")
+  status        PurchaseStatus @default(PENDING)
+  approvedById  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  requestedBy   User           @relation(fields: [requestedById], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+}
+
+// -------------------------------------------------------------
+// Layer 2 & 4: Persistent ROSCA, Loans, and Budgets
+// -------------------------------------------------------------
+model RoscaCycle {
+  id                         String           @id @default(cuid())
+  workspaceId                String
+  name                       String
+  contributionPerMemberMinor BigInt
+  currency                   String           @default("KES")
+  frequencyDays              Int              @default(30)
+  status                     RoscaCycleStatus @default(ACTIVE)
+  currentRound               Int              @default(1)
+  totalRounds                Int
+  createdAt                  DateTime         @default(now())
+  updatedAt                  DateTime         @updatedAt
+  workspace                  Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members                    RoscaMember[]
+  rounds                     RoscaRound[]
+
+  @@index([workspaceId, status])
+}
+
+model RoscaMember {
+  id        String     @id @default(cuid())
+  cycleId   String
+  memberId  String
+  position  Int
+  createdAt DateTime   @default(now())
+  cycle     RoscaCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+
+  @@unique([cycleId, memberId])
+}
+
+model RoscaRound {
+  id                  String           @id @default(cuid())
+  cycleId             String
+  roundNumber         Int
+  beneficiaryMemberId String
+  expectedPayoutMinor BigInt
+  collectedMinor      BigInt           @default(0)
+  status              RoscaRoundStatus @default(PENDING)
+  disbursedAt         DateTime?
+  payoutTxRef         String?
+  createdAt           DateTime         @default(now())
+  cycle               RoscaCycle       @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+
+  @@unique([cycleId, roundNumber])
+}
+
+model TableLoan {
+  id                  String           @id @default(cuid())
+  workspaceId         String
+  borrowerMemberId    String
+  borrowerName        String
+  principalMinor      BigInt
+  interestRatePercent Decimal
+  durationMonths      Int
+  interestType        LoanInterestType @default(FLAT)
+  totalInterestMinor  BigInt
+  totalPayableMinor   BigInt
+  monthlyPaymentMinor BigInt
+  balanceMinor        BigInt
+  status              LoanStatus       @default(PENDING)
+  approvedById        String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  workspace           Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  repayments          LoanRepayment[]
+
+  @@index([workspaceId, status])
+}
+
+model LoanRepayment {
+  id          String    @id @default(cuid())
+  loanId      String
+  amountMinor BigInt
+  currency    String    @default("KES")
+  paymentRef  String?
+  verified    Boolean   @default(true)
+  receivedAt  DateTime  @default(now())
+  loan        TableLoan @relation(fields: [loanId], references: [id], onDelete: Cascade)
+}
+
+model Budget {
+  id                    String    @id @default(cuid())
+  workspaceId           String
+  category              String
+  period                String    @default("MONTHLY")
+  allocatedMinor        BigInt
+  currency              String    @default("KES")
+  alertThresholdPercent Int       @default(80)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  workspace             Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, category, period])
+  @@index([workspaceId])
+}
+
+// -------------------------------------------------------------
+// Layer 4: Multi-Currency & Persistent FX Models
+// -------------------------------------------------------------
+model FXQuote {
+  id                String         @id @default(cuid())
+  workspaceId       String
+  quoteRef          String         @unique
+  fromCurrency      String
+  toCurrency        String
+  rate              Decimal
+  spread            Decimal        @default(0)
+  sourceAmountMinor BigInt
+  targetAmountMinor BigInt
+  expiresAt         DateTime
+  status            FXQuoteStatus  @default(ACTIVE)
+  provider          String         @default("HESABU_FX")
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  workspace         Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversions       FXConversion[]
+
+  @@index([workspaceId, status])
+}
+
+model FXConversion {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  quoteId           String
+  fromCurrency      String
+  toCurrency        String
+  sourceAmountMinor BigInt
+  targetAmountMinor BigInt
+  rate              Decimal
+  feesMinor         BigInt    @default(0)
+  settlementRef     String
+  executedAt        DateTime  @default(now())
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  quote             FXQuote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }
