@@ -8,6 +8,8 @@ import { AppError, asyncHandler } from '../../shared/errors.js';
 import { parseMinorUnits, jsonSafe } from '../../shared/money.js';
 import { verifyStellarTransaction } from '../../integrations/stellar/stellarService.js';
 import { initiateMpesaSTKPush, verifyMpesaCallback } from '../../integrations/mpesa/mpesaService.js';
+import { isAuthorizedDarajaIp, validateStkCallbackPayload } from '../../integrations/mpesa/mpesaSecurity.js';
+import { agenticFinanceEngine } from '../agent/agentService.js';
 
 const router = Router();
 
@@ -15,9 +17,23 @@ const router = Router();
 // Unauthenticated Webhook: Safaricom M-Pesa Callback
 // -------------------------------------------------------------
 router.post('/payments/mpesa-callback', asyncHandler(async (req, res) => {
+  if (!isAuthorizedDarajaIp(req.ip)) {
+    throw new AppError(`Unauthorized Daraja webhook source IP: ${req.ip}`, 403);
+  }
+
+  const payloadValidation = validateStkCallbackPayload(req.body);
+  if (!payloadValidation.valid) {
+    throw new AppError(`Invalid M-Pesa callback envelope: ${payloadValidation.error}`, 400);
+  }
+
   const verified = verifyMpesaCallback({ callbackBody: req.body });
   const payment = await prisma.payment.findFirst({
-    where: { providerRef: verified.checkoutRequestId },
+    where: {
+      OR: [
+        { checkoutRequestId: verified.checkoutRequestId },
+        { providerRef: verified.checkoutRequestId }
+      ]
+    },
     include: { obligation: true }
   });
 
@@ -29,14 +45,27 @@ router.post('/payments/mpesa-callback', asyncHandler(async (req, res) => {
     return res.status(200).json({ ResultCode: 0, ResultDesc: 'Already confirmed' });
   }
 
+  // Validate amount matches expected payment attempt
+  const expectedWhole = Math.round(Number(payment.amountMinor) / 100);
+  if (verified.amountPaid !== null && verified.amountPaid !== expectedWhole) {
+    throw new AppError(
+      `M-Pesa payment amount mismatch: expected ${expectedWhole} KES, received ${verified.amountPaid} KES.`,
+      400
+    );
+  }
+
   await prisma.$transaction(async tx => {
     await tx.payment.update({
       where: { id: payment.id },
       data: {
         status: 'CONFIRMED',
         providerRef: verified.receiptNumber,
+        checkoutRequestId: verified.checkoutRequestId,
+        merchantRequestId: verified.merchantRequestId,
+        mpesaReceiptNumber: verified.receiptNumber,
         metadata: {
           checkoutRequestId: verified.checkoutRequestId,
+          merchantRequestId: verified.merchantRequestId,
           receiptNumber: verified.receiptNumber,
           phoneNumber: verified.phoneNumber,
           resultDesc: verified.resultDesc
@@ -63,7 +92,7 @@ router.post('/payments/mpesa-callback', asyncHandler(async (req, res) => {
         description: `Verified Safaricom M-Pesa settlement (${verified.receiptNumber}) for obligation ${payment.obligationId}`,
         lines: {
           create: [
-            { accountCode: '1000-MPESA-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
+            { accountCode: '1010-MPESA-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
             { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
           ]
         }
@@ -192,7 +221,7 @@ router.post('/obligations/:id/cancel', requireWorkspaceRoleByObligation, allowRo
 // -------------------------------------------------------------
 router.post('/obligations/:id/payments', requireWorkspaceRoleByObligation, asyncHandler(async (req, res) => {
   const data = z.object({
-    rail: z.enum(['DEVELOPMENT', 'STELLAR', 'MPESA']),
+    rail: z.enum(['DEVELOPMENT', 'STELLAR', 'MPESA', 'PAYSHAP_EFT']),
     idempotencyKey: z.string().min(8).max(100).optional(),
     phoneNumber: z.string().optional()
   }).parse(req.body);
@@ -217,28 +246,24 @@ router.post('/obligations/:id/payments', requireWorkspaceRoleByObligation, async
   if (pending) throw new AppError('A payment attempt is already pending for this obligation.', 409);
 
   const idempotencyKey = data.idempotencyKey || randomUUID();
-  let providerRef = null;
   let metadata = null;
+  let providerRef = null;
 
-  if (data.rail === 'MPESA') {
-    if (data.phoneNumber) {
-      const stk = await initiateMpesaSTKPush({
-        phoneNumber: data.phoneNumber,
-        amountMinor: outstanding,
-        accountReference: obligation.id.slice(0, 12),
-        transactionDesc: obligation.title
-      });
-      providerRef = stk.checkoutRequestId;
-      metadata = { phoneNumber: data.phoneNumber, checkoutRequestId: stk.checkoutRequestId };
-    }
-  } else if (data.rail === 'STELLAR') {
+  if (data.rail === 'STELLAR') {
     metadata = {
       memo: `HESABU-${obligation.id.slice(0, 8)}`,
       network: env.STELLAR_NETWORK
     };
+  } else if (data.rail === 'PAYSHAP_EFT') {
+    providerRef = `ZA-EFT-${obligation.id.slice(0, 8)}-${Date.now().toString(36).toUpperCase()}`;
+    metadata = {
+      paymentReference: providerRef,
+      country: 'ZA'
+    };
   }
 
-  const payment = await prisma.payment.create({
+  // Step 1: Create durable Payment intent in database FIRST
+  let payment = await prisma.payment.create({
     data: {
       workspaceId: obligation.workspaceId,
       obligationId: obligation.id,
@@ -247,14 +272,52 @@ router.post('/obligations/:id/payments', requireWorkspaceRoleByObligation, async
       currency: obligation.currency,
       idempotencyKey,
       providerRef,
-      metadata
+      metadata,
+      status: 'PENDING'
     }
   });
+
+  // Step 2: If M-Pesa rail, initiate STK push and update payment with provider references
+  if (data.rail === 'MPESA') {
+    if (data.phoneNumber) {
+      try {
+        const stk = await initiateMpesaSTKPush({
+          phoneNumber: data.phoneNumber,
+          amountMinor: outstanding,
+          accountReference: obligation.id.slice(0, 12),
+          transactionDesc: obligation.title
+        });
+        payment = await prisma.payment.update({
+          where: { id: payment.id },
+          data: {
+            providerRef: stk.checkoutRequestId,
+            checkoutRequestId: stk.checkoutRequestId,
+            merchantRequestId: stk.merchantRequestId,
+            status: 'PROCESSING',
+            metadata: {
+              phoneNumber: data.phoneNumber,
+              checkoutRequestId: stk.checkoutRequestId,
+              merchantRequestId: stk.merchantRequestId,
+              customerMessage: stk.customerMessage
+            }
+          }
+        });
+      } catch (err) {
+        await prisma.payment.update({
+          where: { id: payment.id },
+          data: { status: 'FAILED', metadata: { error: err.message } }
+        });
+        throw err;
+      }
+    }
+  }
 
   const notice = data.rail === 'DEVELOPMENT'
     ? 'Development payment attempt registered.'
     : data.rail === 'STELLAR'
     ? 'Stellar payment attempt registered. Awaiting on-chain transaction hash.'
+    : data.rail === 'PAYSHAP_EFT'
+    ? 'South Africa PayShap/EFT payment reference generated. Awaiting bank settlement.'
     : 'M-Pesa payment attempt registered. Awaiting callback or carrier confirmation.';
 
   res.status(201).json({ payment: jsonSafe(payment), notice });
@@ -330,7 +393,9 @@ router.post('/payments/:id/stellar-confirm', asyncHandler(async (req, res) => {
 
   const verification = await verifyStellarTransaction({
     txHash: data.txHash,
-    expectedMemo: payment.metadata?.memo
+    expectedMemo: payment.metadata?.memo,
+    expectedAmountMinor: payment.amountMinor,
+    expectedAssetCode: payment.currency === 'KES' ? 'KES' : 'USDC'
   });
 
   const result = await prisma.$transaction(async tx => {
@@ -389,7 +454,7 @@ router.post('/payments/:id/stellar-confirm', asyncHandler(async (req, res) => {
   res.json({ payment: jsonSafe(result), verification, notice: 'On-chain Stellar transaction independently verified and posted to journal.' });
 }));
 
-// M-Pesa manual/carrier confirmation
+// M-Pesa manual/carrier confirmation (Restricted to Finance Managers / Admins with audit trail)
 router.post('/payments/:id/mpesa-confirm', asyncHandler(async (req, res) => {
   const data = z.object({
     receiptNumber: z.string().trim().min(8).max(30).regex(/^[A-Z0-9]+$/, 'Receipt number must be alphanumeric (e.g. QA12345678).'),
@@ -404,6 +469,9 @@ router.post('/payments/:id/mpesa-confirm', asyncHandler(async (req, res) => {
     where: { userId_workspaceId: { userId: req.user.id, workspaceId: payment.workspaceId } }
   });
   if (!membership) throw new AppError('Workspace access denied.', 403);
+  if (!['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(membership.role)) {
+    throw new AppError('Only workspace Owners, Admins, or Finance Managers can confirm manual M-Pesa settlements. Members should submit via /claim-manual.', 403);
+  }
   if (payment.status === 'CONFIRMED') return res.json({ payment: jsonSafe(payment), message: 'Already confirmed via M-Pesa.' });
 
   const result = await prisma.$transaction(async tx => {
@@ -415,7 +483,8 @@ router.post('/payments/:id/mpesa-confirm', asyncHandler(async (req, res) => {
       data: {
         status: 'CONFIRMED',
         providerRef: cleanReceipt,
-        metadata: { ...(payment.metadata || {}), receiptNumber: cleanReceipt, phoneNumber: data.phoneNumber }
+        mpesaReceiptNumber: cleanReceipt,
+        metadata: { ...(payment.metadata || {}), receiptNumber: cleanReceipt, phoneNumber: data.phoneNumber, verifiedBy: req.user.id }
       }
     });
 
@@ -437,13 +506,13 @@ router.post('/payments/:id/mpesa-confirm', asyncHandler(async (req, res) => {
         reference: `SETTLEMENT-MPESA-${settlement.id}`,
         description: `Verified M-Pesa settlement (${cleanReceipt}) for obligation ${payment.obligationId}`,
         lines: { create: [
-          { accountCode: '1000-MPESA-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
+          { accountCode: '1010-MPESA-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
           { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
         ]}
       }
     });
 
-    await audit(tx, payment.workspaceId, req.user.id, 'PAYMENT_CONFIRMED_MPESA', 'Payment', payment.id, {
+    await audit(tx, payment.workspaceId, req.user.id, 'PAYMENT_CONFIRMED_MPESA_MANUAL', 'Payment', payment.id, {
       receiptNumber: cleanReceipt,
       journalEntryId: journal.id
     });
@@ -456,7 +525,125 @@ router.post('/payments/:id/mpesa-confirm', asyncHandler(async (req, res) => {
     return updated;
   });
 
-  res.json({ payment: jsonSafe(result), receiptNumber: cleanReceipt, notice: 'M-Pesa payment confirmed and posted to ledger.' });
+  res.json({ payment: jsonSafe(result), receiptNumber: cleanReceipt, notice: 'M-Pesa receipt verified by administrator and posted to journal.' });
+}));
+
+// Member unverified manual payment claim submission
+router.post('/payments/:id/claim-manual', asyncHandler(async (req, res) => {
+  const data = z.object({
+    receiptNumber: z.string().trim().min(6).max(40),
+    phoneNumber: z.string().optional(),
+    notes: z.string().optional()
+  }).parse(req.body);
+
+  const payment = await prisma.payment.findUnique({ where: { id: req.params.id }, include: { obligation: true } });
+  if (!payment) throw new AppError('Payment not found.', 404);
+  const membership = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId: req.user.id, workspaceId: payment.workspaceId } }
+  });
+  if (!membership) throw new AppError('Workspace access denied.', 403);
+
+  const cleanReceipt = data.receiptNumber.toUpperCase();
+
+  const updated = await prisma.payment.update({
+    where: { id: payment.id },
+    data: {
+      metadata: {
+        ...(payment.metadata || {}),
+        manualClaim: {
+          receiptNumber: cleanReceipt,
+          phoneNumber: data.phoneNumber,
+          notes: data.notes,
+          submittedBy: req.user.id,
+          submittedAt: new Date().toISOString()
+        }
+      }
+    }
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      workspaceId: payment.workspaceId,
+      actorId: req.user.id,
+      action: 'PAYMENT_MANUAL_CLAIM_SUBMITTED',
+      entityType: 'Payment',
+      entityId: payment.id,
+      details: { receiptNumber: cleanReceipt }
+    }
+  });
+
+  res.json({ payment: jsonSafe(updated), notice: 'Offline payment claim submitted for treasurer verification.' });
+}));
+
+// South Africa PayShap / EFT payment settlement
+router.post('/payments/:id/payshap-confirm', asyncHandler(async (req, res) => {
+  const data = z.object({
+    bankReference: z.string().trim().min(6).max(40)
+  }).parse(req.body);
+
+  const payment = await prisma.payment.findUnique({ where: { id: req.params.id }, include: { obligation: true, workspace: true } });
+  if (!payment) throw new AppError('Payment not found.', 404);
+  const membership = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId: req.user.id, workspaceId: payment.workspaceId } }
+  });
+  if (!membership || !['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(membership.role)) {
+    throw new AppError('Only finance managers can confirm South African EFT settlements.', 403);
+  }
+  if (payment.status === 'CONFIRMED') return res.json({ payment: jsonSafe(payment), message: 'Already confirmed.' });
+
+  const cleanRef = data.bankReference.toUpperCase();
+
+  const result = await prisma.$transaction(async tx => {
+    const existingRef = await tx.settlement.findUnique({ where: { externalRef: cleanRef } });
+    if (existingRef) throw new AppError(`Bank reference ${cleanRef} has already settled a payment.`, 409);
+
+    const updated = await tx.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: 'CONFIRMED',
+        providerRef: cleanRef,
+        metadata: { ...(payment.metadata || {}), bankReference: cleanRef }
+      }
+    });
+
+    const settlement = await tx.settlement.create({
+      data: {
+        workspaceId: payment.workspaceId,
+        obligationId: payment.obligationId,
+        paymentId: payment.id,
+        amountMinor: payment.amountMinor,
+        currency: payment.currency,
+        rail: 'PAYSHAP_EFT',
+        externalRef: cleanRef
+      }
+    });
+
+    const journal = await tx.journalEntry.create({
+      data: {
+        workspaceId: payment.workspaceId,
+        reference: `SETTLEMENT-EFT-${settlement.id}`,
+        description: `Verified South Africa PayShap/EFT settlement (${cleanRef}) for obligation ${payment.obligationId}`,
+        lines: { create: [
+          { accountCode: '1030-BANK-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
+          { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
+        ]}
+      }
+    });
+
+    await audit(tx, payment.workspaceId, req.user.id, 'PAYMENT_CONFIRMED_EFT', 'Payment', payment.id, {
+      bankReference: cleanRef,
+      journalEntryId: journal.id
+    });
+
+    const total = await tx.settlement.aggregate({ where: { obligationId: payment.obligationId }, _sum: { amountMinor: true } });
+    const paid = total._sum.amountMinor || 0n;
+    const status = paid >= payment.obligation.amountMinor ? 'SETTLED' : 'PARTIALLY_PAID';
+    await tx.obligation.update({ where: { id: payment.obligationId }, data: { status } });
+
+    return updated;
+  });
+
+  res.json({ payment: jsonSafe(result), notice: 'South Africa PayShap/EFT settlement verified and posted to journal.' });
 }));
 
 router.get('/workspaces/:workspaceId/payments', requireWorkspaceRole, asyncHandler(async (req, res) => {
@@ -702,7 +889,7 @@ router.post('/journal/:id/reverse', asyncHandler(async (req, res) => {
   res.json({ reversingEntry: jsonSafe(result), notice: 'Journal entry reversed with balanced counter-entry.' });
 }));
 
-// Financial Statements: Trial Balance
+// Financial Statements: Trial Balance (Multi-Currency Aware)
 router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRole, asyncHandler(async (req, res) => {
   const entries = await prisma.journalEntry.findMany({
     where: { workspaceId: req.params.workspaceId, status: 'POSTED' },
@@ -710,23 +897,33 @@ router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRol
   });
 
   const accounts = {};
+  const currencyTotals = {};
   let grandTotalDebits = 0n;
   let grandTotalCredits = 0n;
 
   for (const entry of entries) {
     for (const line of entry.lines) {
+      const c = line.currency;
+      if (!currencyTotals[c]) {
+        currencyTotals[c] = { debitsMinor: 0n, creditsMinor: 0n };
+      }
+
       if (!accounts[line.accountCode]) {
         accounts[line.accountCode] = { accountCode: line.accountCode, debitMinor: 0n, creditMinor: 0n, currency: line.currency };
       }
       if (line.side === 'DEBIT') {
         accounts[line.accountCode].debitMinor += line.amountMinor;
+        currencyTotals[c].debitsMinor += line.amountMinor;
         grandTotalDebits += line.amountMinor;
       } else {
         accounts[line.accountCode].creditMinor += line.amountMinor;
+        currencyTotals[c].creditsMinor += line.amountMinor;
         grandTotalCredits += line.amountMinor;
       }
     }
   }
+
+  const allCurrenciesBalanced = Object.values(currencyTotals).every(ct => ct.debitsMinor === ct.creditsMinor);
 
   res.json({
     trialBalance: {
@@ -738,12 +935,22 @@ router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRol
       })),
       totalDebitsMinor: grandTotalDebits.toString(),
       totalCreditsMinor: grandTotalCredits.toString(),
-      isBalanced: grandTotalDebits === grandTotalCredits
+      isBalanced: grandTotalDebits === grandTotalCredits && allCurrenciesBalanced,
+      currencyBreakdown: Object.fromEntries(
+        Object.entries(currencyTotals).map(([c, totals]) => [
+          c,
+          {
+            debitsMinor: totals.debitsMinor.toString(),
+            creditsMinor: totals.creditsMinor.toString(),
+            balanced: totals.debitsMinor === totals.creditsMinor
+          }
+        ])
+      )
     }
   });
 }));
 
-// Financial Statements: Income Statement (P&L)
+// Financial Statements: Income Statement (P&L) (Multi-Currency Aware)
 router.get('/workspaces/:workspaceId/reports/income-statement', requireWorkspaceRole, asyncHandler(async (req, res) => {
   const workspaceId = req.params.workspaceId;
   const [settlements, expenses] = await Promise.all([
@@ -815,64 +1022,15 @@ router.post('/workspaces/:workspaceId/agent/query', requireWorkspaceRole, asyncH
   const { question } = z.object({ question: z.string().trim().min(3).max(500) }).parse(req.body);
   const workspaceId = req.params.workspaceId;
 
-  const [workspace, obligations, payments, settlements, expenses, campaigns] = await Promise.all([
-    prisma.workspace.findUnique({ where: { id: workspaceId } }),
-    prisma.obligation.findMany({ where: { workspaceId }, include: { settlements: true } }),
-    prisma.payment.findMany({ where: { workspaceId } }),
-    prisma.settlement.findMany({ where: { workspaceId } }),
-    prisma.expense.findMany({ where: { workspaceId } }),
-    prisma.campaign.findMany({ where: { workspaceId } })
-  ]);
-
-  const totalObligations = obligations.reduce((sum, o) => sum + o.amountMinor, 0n);
-  const totalSettled = settlements.reduce((sum, s) => sum + s.amountMinor, 0n);
-  const totalOutstanding = totalObligations - totalSettled;
-  const approvedExpenses = expenses.filter(e => e.status === 'APPROVED' || e.status === 'PAID').reduce((sum, e) => sum + e.amountMinor, 0n);
-  const unapprovedExpenses = expenses.filter(e => e.status === 'SUBMITTED');
-  const overdue = obligations.filter(o => o.status !== 'SETTLED' && o.dueAt && new Date(o.dueAt) < new Date());
-
-  const q = question.toLowerCase();
-  let answer = '';
-  let metrics = {};
-
-  if (q.includes('unpaid') || q.includes('owe') || q.includes('outstanding') || q.includes('who has not')) {
-    const unpaidMembers = obligations.filter(o => o.status !== 'SETTLED').map(o => `${o.memberName} owes ${Number(o.amountMinor)/100} ${workspace.currency}`);
-    answer = unpaidMembers.length > 0
-      ? `There are ${unpaidMembers.length} unpaid obligations totaling ${Number(totalOutstanding)/100} ${workspace.currency}:\n• ` + unpaidMembers.join('\n• ')
-      : `All obligations in this workspace are completely settled!`;
-    metrics = { totalOutstandingMinor: totalOutstanding.toString(), count: unpaidMembers.length };
-  } else if (q.includes('spend') || q.includes('expense') || q.includes('cost') || q.includes('burn')) {
-    const cats = {};
-    for (const e of expenses) {
-      cats[e.category] = (cats[e.category] || 0) + Number(e.amountMinor) / 100;
-    }
-    const catBreakdown = Object.entries(cats).map(([k, v]) => `${k}: ${v} ${workspace.currency}`).join(', ');
-    answer = `Total approved expenditures amount to ${Number(approvedExpenses)/100} ${workspace.currency}. Spending breakdown: ${catBreakdown || 'No expenses yet'}. There are ${unapprovedExpenses.length} submissions pending review.`;
-    metrics = { approvedExpensesMinor: approvedExpenses.toString(), pendingCount: unapprovedExpenses.length };
-  } else if (q.includes('campaign') || q.includes('target') || q.includes('fundrais')) {
-    answer = campaigns.length > 0
-      ? `There are ${campaigns.length} campaigns active. Details: ` + campaigns.map(c => `"${c.title}" with target ${Number(c.targetAmountMinor)/100} ${c.currency}`).join('; ')
-      : 'No active fundraising campaigns currently set up.';
-    metrics = { campaignCount: campaigns.length };
-  } else if (q.includes('stellar') || q.includes('blockchain') || q.includes('crypto') || q.includes('usdc')) {
-    const stellarPayments = payments.filter(p => p.rail === 'STELLAR');
-    const confirmedStellar = stellarPayments.filter(p => p.status === 'CONFIRMED');
-    answer = `Stellar integration: ${stellarPayments.length} payment attempts initiated, with ${confirmedStellar.length} independently verified on the Stellar Horizon network (${env.STELLAR_NETWORK}).`;
-    metrics = { stellarAttempts: stellarPayments.length, confirmed: confirmedStellar.length };
-  } else {
-    answer = `Financial Summary for ${workspace.name}: Total expected obligations are ${Number(totalObligations)/100} ${workspace.currency}, with ${Number(totalSettled)/100} ${workspace.currency} verified and received. Outstanding balance is ${Number(totalOutstanding)/100} ${workspace.currency}. Total approved spending is ${Number(approvedExpenses)/100} ${workspace.currency}. Net available balance is ${Number(totalSettled - approvedExpenses)/100} ${workspace.currency}.`;
-    metrics = {
-      totalObligationsMinor: totalObligations.toString(),
-      totalSettledMinor: totalSettled.toString(),
-      netBalanceMinor: (totalSettled - approvedExpenses).toString()
-    };
-  }
+  const result = await agenticFinanceEngine.handleQuery({ workspaceId, question });
 
   res.json({
     response: {
-      question,
-      answer,
-      metrics,
+      question: result.question,
+      answer: result.answer,
+      agentInvoked: result.agentInvoked,
+      metrics: result.metrics,
+      toolData: result.toolData,
       timestamp: new Date().toISOString()
     }
   });
@@ -880,80 +1038,32 @@ router.post('/workspaces/:workspaceId/agent/query', requireWorkspaceRole, asyncH
 
 router.get('/workspaces/:workspaceId/agent/reconcile', requireWorkspaceRole, asyncHandler(async (req, res) => {
   const workspaceId = req.params.workspaceId;
-  const [obligations, payments, settlements, expenses, journalEntries] = await Promise.all([
-    prisma.obligation.findMany({ where: { workspaceId }, include: { settlements: true, payments: true } }),
-    prisma.payment.findMany({ where: { workspaceId }, include: { obligation: true } }),
-    prisma.settlement.findMany({ where: { workspaceId } }),
-    prisma.expense.findMany({ where: { workspaceId } }),
-    prisma.journalEntry.findMany({ where: { workspaceId }, include: { lines: true } })
-  ]);
-
-  const totalObligations = obligations.reduce((sum, o) => sum + o.amountMinor, 0n);
-  const totalSettled = settlements.reduce((sum, s) => sum + s.amountMinor, 0n);
-  const totalOutstanding = totalObligations - totalSettled;
-  const approvedExpenses = expenses.filter(e => e.status === 'APPROVED' || e.status === 'PAID').reduce((sum, e) => sum + e.amountMinor, 0n);
-  const unapprovedExpenses = expenses.filter(e => e.status === 'SUBMITTED');
-
-  let journalUnbalancedCount = 0;
-  for (const entry of journalEntries) {
-    const debits = entry.lines.filter(l => l.side === 'DEBIT').reduce((s, l) => s + l.amountMinor, 0n);
-    const credits = entry.lines.filter(l => l.side === 'CREDIT').reduce((s, l) => s + l.amountMinor, 0n);
-    if (debits !== credits) {
-      journalUnbalancedCount++;
-    }
-  }
-
-  const actionItems = [];
-  if (journalUnbalancedCount > 0) {
-    actionItems.push({
-      type: 'LEDGER_IMBALANCE',
-      severity: 'CRITICAL',
-      message: `${journalUnbalancedCount} journal entries have debit/credit imbalances.`
-    });
-  }
-
-  const overdueObligations = obligations.filter(o => o.status !== 'SETTLED' && o.dueAt && new Date(o.dueAt) < new Date());
-  if (overdueObligations.length > 0) {
-    actionItems.push({
-      type: 'OVERDUE_OBLIGATIONS',
-      severity: 'WARNING',
-      message: `${overdueObligations.length} obligations are past their due date.`,
-      items: overdueObligations.map(o => ({ id: o.id, title: o.title, member: o.memberName, amount: o.amountMinor.toString() }))
-    });
-  }
-
-  const stuckPayments = payments.filter(p => p.status === 'PENDING' && (Date.now() - new Date(p.createdAt).getTime()) > 3600000);
-  if (stuckPayments.length > 0) {
-    actionItems.push({
-      type: 'PENDING_PAYMENT_FOLLOWUP',
-      severity: 'INFO',
-      message: `${stuckPayments.length} payment attempts have been pending verification for over an hour.`,
-      items: stuckPayments.map(p => ({ id: p.id, rail: p.rail, amount: p.amountMinor.toString() }))
-    });
-  }
-
-  if (unapprovedExpenses.length > 0) {
-    actionItems.push({
-      type: 'UNREVIEWED_EXPENSES',
-      severity: 'ACTION_REQUIRED',
-      message: `${unapprovedExpenses.length} expense submissions require review.`,
-      items: unapprovedExpenses.map(e => ({ id: e.id, title: e.title, amount: e.amountMinor.toString() }))
-    });
-  }
+  const result = await agenticFinanceEngine.runReconciliationAgent({ workspaceId });
 
   res.json({
     insights: {
-      generatedAt: new Date().toISOString(),
+      generatedAt: result.timestamp,
       agentRole: 'Autonomous Financial Reconciliation & Intelligence Agent',
-      totalObligationsMinor: totalObligations.toString(),
-      totalSettledMinor: totalSettled.toString(),
-      totalOutstandingMinor: totalOutstanding.toString(),
-      approvedExpensesMinor: approvedExpenses.toString(),
-      journalEntriesCount: journalEntries.length,
-      reconciliationHealth: journalUnbalancedCount === 0 ? 'HEALTHY' : 'NEEDS_ATTENTION',
-      actionItems
+      reconciliationHealth: result.health,
+      matchedSettlementsCount: result.matchedCount,
+      unmatchedSettlementsCount: result.unmatchedCount,
+      stuckPaymentsCount: result.stuckPaymentsCount,
+      unbalancedCurrencies: result.unbalancedCurrencies,
+      actionItems: result.unmatchedSettlements.concat(result.stuckPayments)
     }
   });
+}));
+
+router.get('/workspaces/:workspaceId/agent/collections', requireWorkspaceRole, asyncHandler(async (req, res) => {
+  const workspaceId = req.params.workspaceId;
+  const result = await agenticFinanceEngine.runCollectionsAgent({ workspaceId });
+  res.json({ collections: jsonSafe(result) });
+}));
+
+router.get('/workspaces/:workspaceId/agent/treasury', requireWorkspaceRole, asyncHandler(async (req, res) => {
+  const workspaceId = req.params.workspaceId;
+  const result = await agenticFinanceEngine.runTreasuryAgent({ workspaceId });
+  res.json({ treasury: jsonSafe(result) });
 }));
 
 router.get('/workspaces/:workspaceId/dashboard', requireWorkspaceRole, asyncHandler(async (req, res) => {
