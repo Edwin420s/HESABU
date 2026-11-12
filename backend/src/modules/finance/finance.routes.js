@@ -38,23 +38,30 @@ router.post('/payments/mpesa-callback', asyncHandler(async (req, res) => {
     include: { obligation: true }
   });
 
+  const providerEvent = await prisma.providerEvent.create({
+    data: {
+      workspaceId: payment?.workspaceId || null,
+      paymentId: payment?.id || null,
+      provider: 'MPESA_DARAJA',
+      eventType: 'STK_CALLBACK',
+      externalId: stk.CheckoutRequestID,
+      payload: req.body,
+      status: 'RECEIVED'
+    }
+  }).catch(() => null);
+
   if (!payment) {
-    // Durably store orphan callback event for forensic audit trail
-    await prisma.auditLog.create({
-      data: {
-        workspaceId: 'SYSTEM',
-        actorId: null,
-        action: 'ORPHAN_MPESA_CALLBACK',
-        entityType: 'MpesaCallback',
-        entityId: stk.CheckoutRequestID,
-        details: req.body
-      }
-    }).catch(() => {});
+    if (providerEvent) {
+      await prisma.providerEvent.update({ where: { id: providerEvent.id }, data: { status: 'ORPHAN' } }).catch(() => {});
+    }
     return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   }
 
   // Durably record failed payment attempts
   if (stk.ResultCode !== 0) {
+    if (providerEvent) {
+      await prisma.providerEvent.update({ where: { id: providerEvent.id }, data: { status: 'FAILED' } }).catch(() => {});
+    }
     await prisma.payment.update({
       where: { id: payment.id },
       data: {
@@ -98,6 +105,13 @@ router.post('/payments/mpesa-callback', asyncHandler(async (req, res) => {
   }
 
   await prisma.$transaction(async tx => {
+    if (providerEvent) {
+      await tx.providerEvent.update({
+        where: { id: providerEvent.id },
+        data: { status: 'PROCESSED', processedAt: new Date() }
+      }).catch(() => {});
+    }
+
     await tx.payment.update({
       where: { id: payment.id },
       data: {
@@ -191,18 +205,23 @@ router.post('/payments/payshap-webhook', asyncHandler(async (req, res) => {
     include: { obligation: true }
   });
 
+  const providerEvent = await prisma.providerEvent.create({
+    data: {
+      workspaceId: payment?.workspaceId || null,
+      paymentId: payment?.id || null,
+      provider: 'PAYSHAP_EFT',
+      eventType: 'SETTLEMENT_WEBHOOK',
+      externalId: verified.providerTransactionId,
+      payload: req.body,
+      signature: signature || null,
+      status: 'RECEIVED'
+    }
+  }).catch(() => null);
+
   if (!payment) {
-    // Durably store orphan event for forensic investigation
-    await prisma.auditLog.create({
-      data: {
-        workspaceId: 'SYSTEM',
-        actorId: null,
-        action: 'ORPHAN_PAYSHAP_WEBHOOK',
-        entityType: 'PayShapCallback',
-        entityId: verified.providerTransactionId,
-        details: verified.rawPayload
-      }
-    }).catch(() => {});
+    if (providerEvent) {
+      await prisma.providerEvent.update({ where: { id: providerEvent.id }, data: { status: 'ORPHAN' } }).catch(() => {});
+    }
     return res.status(200).json({ status: 'ACCEPTED', message: 'No matching payment intent found.' });
   }
 
@@ -210,17 +229,26 @@ router.post('/payments/payshap-webhook', asyncHandler(async (req, res) => {
     return res.status(200).json({ status: 'ALREADY_CONFIRMED', paymentId: payment.id });
   }
 
+  // Idempotency: verify whether settlement was already created to prevent duplicate responses
+  const existingSettlement = await prisma.settlement.findUnique({
+    where: { externalRef: verified.providerTransactionId }
+  });
+  if (existingSettlement) {
+    return res.status(200).json({ status: 'ALREADY_SETTLED', providerTransactionId: verified.providerTransactionId });
+  }
+
   // Exact minor amount check
   if (BigInt(payment.amountMinor) !== BigInt(verified.amountMinor)) {
     throw new AppError(`PayShap settlement amount mismatch: expected ${payment.amountMinor} minor units, received ${verified.amountMinor}.`, 400);
   }
 
+  let finalSettlementId = '';
   await prisma.$transaction(async tx => {
-    const existingSettlement = await tx.settlement.findUnique({
-      where: { externalRef: verified.providerTransactionId }
-    });
-    if (existingSettlement) {
-      return res.status(200).json({ status: 'ALREADY_SETTLED', providerTransactionId: verified.providerTransactionId });
+    if (providerEvent) {
+      await tx.providerEvent.update({
+        where: { id: providerEvent.id },
+        data: { status: 'PROCESSED', processedAt: new Date() }
+      }).catch(() => {});
     }
 
     await tx.payment.update({
@@ -246,6 +274,7 @@ router.post('/payments/payshap-webhook', asyncHandler(async (req, res) => {
         externalRef: verified.providerTransactionId
       }
     });
+    finalSettlementId = settlement.id;
 
     const journal = await tx.journalEntry.create({
       data: {
@@ -569,6 +598,12 @@ router.post('/payments/:id/stellar-confirm', asyncHandler(async (req, res) => {
   });
   if (!membership) throw new AppError('Workspace access denied.', 403);
   if (payment.status === 'CONFIRMED') return res.json({ payment: jsonSafe(payment), message: 'Already confirmed on Stellar.' });
+  if (payment.rail !== 'STELLAR') {
+    throw new AppError(`Cannot confirm non-Stellar payment via Stellar rail. Payment rail is ${payment.rail}.`, 400);
+  }
+  if (payment.status !== 'PENDING' && payment.status !== 'PROCESSING') {
+    throw new AppError(`Payment status "${payment.status}" cannot be confirmed. Valid transition states are PENDING or PROCESSING.`, 400);
+  }
 
   const verification = await verifyStellarTransaction({
     txHash: data.txHash,
@@ -656,6 +691,12 @@ router.post('/payments/:id/mpesa-confirm', asyncHandler(async (req, res) => {
     throw new AppError('Only workspace Owners, Admins, or Finance Managers can confirm manual M-Pesa settlements. Members should submit via /claim-manual.', 403);
   }
   if (payment.status === 'CONFIRMED') return res.json({ payment: jsonSafe(payment), message: 'Already confirmed via M-Pesa.' });
+  if (payment.rail !== 'MPESA') {
+    throw new AppError(`Cannot confirm non-M-Pesa payment via M-Pesa rail. Payment rail is ${payment.rail}.`, 400);
+  }
+  if (payment.status !== 'PENDING' && payment.status !== 'PROCESSING') {
+    throw new AppError(`Payment status "${payment.status}" cannot be confirmed. Valid transition states are PENDING or PROCESSING.`, 400);
+  }
 
   const result = await prisma.$transaction(async tx => {
     const existingRef = await tx.settlement.findUnique({ where: { externalRef: cleanReceipt } });
@@ -731,6 +772,12 @@ router.post('/payments/:id/payshap-confirm', asyncHandler(async (req, res) => {
     throw new AppError('Only workspace Owners, Admins, or Finance Managers can confirm South African EFT/PayShap settlements.', 403);
   }
   if (payment.status === 'CONFIRMED') return res.json({ payment: jsonSafe(payment), message: 'Already confirmed via PayShap/EFT.' });
+  if (payment.rail !== 'PAYSHAP_EFT') {
+    throw new AppError(`Cannot confirm non-PayShap payment via PayShap rail. Payment rail is ${payment.rail}.`, 400);
+  }
+  if (payment.status !== 'PENDING' && payment.status !== 'PROCESSING') {
+    throw new AppError(`Payment status "${payment.status}" cannot be confirmed. Valid transition states are PENDING or PROCESSING.`, 400);
+  }
 
   const result = await prisma.$transaction(async tx => {
     const existingRef = await tx.settlement.findUnique({ where: { externalRef: cleanRef } });
@@ -1086,7 +1133,7 @@ router.post('/journal/:id/reverse', asyncHandler(async (req, res) => {
 // Financial Statements: Trial Balance (Multi-Currency Aware)
 router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRole, asyncHandler(async (req, res) => {
   const entries = await prisma.journalEntry.findMany({
-    where: { workspaceId: req.params.workspaceId, status: 'POSTED' },
+    where: { workspaceId: req.params.workspaceId, status: { in: ['POSTED', 'REVERSED'] } },
     include: { lines: true }
   });
 
@@ -1134,17 +1181,30 @@ router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRol
     ])
   );
 
+  const formattedAccounts = Object.values(accounts).map(a => ({
+    accountCode: a.accountCode,
+    debitMinor: a.debitMinor.toString(),
+    creditMinor: a.creditMinor.toString(),
+    totalDebitMinor: a.debitMinor.toString(),
+    totalCreditMinor: a.creditMinor.toString(),
+    netBalanceMinor: (a.debitMinor - a.creditMinor).toString(),
+    currency: a.currency
+  }));
+
+  const totalDebits = Object.values(currencyTotals).reduce((sum, ct) => sum + ct.debitsMinor, 0n);
+  const totalCredits = Object.values(currencyTotals).reduce((sum, ct) => sum + ct.creditsMinor, 0n);
+
+  const tbData = {
+    accounts: formattedAccounts,
+    isBalanced: allCurrenciesBalanced && Object.keys(currencyTotals).length > 0,
+    totalDebitsMinor: totalDebits.toString(),
+    totalCreditsMinor: totalCredits.toString(),
+    currencyBreakdown
+  };
+
   res.json({
-    trialBalance: {
-      accounts: Object.values(accounts).map(a => ({
-        accountCode: a.accountCode,
-        debitMinor: a.debitMinor.toString(),
-        creditMinor: a.creditMinor.toString(),
-        currency: a.currency
-      })),
-      isBalanced: allCurrenciesBalanced && Object.keys(currencyTotals).length > 0,
-      currencyBreakdown
-    }
+    ...tbData,
+    trialBalance: tbData
   });
 }));
 
@@ -1158,7 +1218,7 @@ router.get('/workspaces/:workspaceId/reports/income-statement', requireWorkspace
   const revenueJournalLines = await prisma.journalLine.findMany({
     where: {
       accountCode: { startsWith: '4' },
-      entry: { workspaceId, status: 'POSTED' }
+      entry: { workspaceId, status: { in: ['POSTED', 'REVERSED'] } }
     }
   });
 
@@ -1194,7 +1254,7 @@ router.get('/workspaces/:workspaceId/reports/income-statement', requireWorkspace
 
   const expensesByCurrency = {};
   for (const e of expenses) {
-    const c = defaultCurrency; // Workspace expense base currency
+    const c = e.currency || defaultCurrency; // Expense currency
     if (!expensesByCurrency[c]) {
       expensesByCurrency[c] = { totalMinor: 0n, categories: {} };
     }
@@ -1228,15 +1288,20 @@ router.get('/workspaces/:workspaceId/reports/income-statement', requireWorkspace
     expensesByCategory: {}
   };
 
+  const isData = {
+    currency: defaultCurrency,
+    revenueMinor: primary.totalRevenueMinor,
+    expensesMinor: primary.totalExpenseMinor,
+    totalRevenueMinor: primary.totalRevenueMinor,
+    totalExpenseMinor: primary.totalExpenseMinor,
+    netSurplusMinor: primary.netSurplusMinor,
+    expensesByCategory: primary.expensesByCategory,
+    currencyBreakdown
+  };
+
   res.json({
-    incomeStatement: {
-      currency: defaultCurrency,
-      totalRevenueMinor: primary.totalRevenueMinor,
-      totalExpenseMinor: primary.totalExpenseMinor,
-      netSurplusMinor: primary.netSurplusMinor,
-      expensesByCategory: primary.expensesByCategory,
-      currencyBreakdown
-    }
+    ...isData,
+    incomeStatement: isData
   });
 }));
 
