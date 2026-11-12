@@ -1101,15 +1101,22 @@ router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRol
         currencyTotals[c] = { debitsMinor: 0n, creditsMinor: 0n };
       }
 
-      if (!accounts[line.accountCode]) {
-        accounts[line.accountCode] = { accountCode: line.accountCode, debitMinor: 0n, creditMinor: 0n, currency: line.currency };
+      // Group by composite key (accountCode, currency) so different currencies are never mixed
+      const accountKey = `${line.accountCode}__${c}`;
+      if (!accounts[accountKey]) {
+        accounts[accountKey] = {
+          accountCode: line.accountCode,
+          debitMinor: 0n,
+          creditMinor: 0n,
+          currency: c
+        };
       }
       if (line.side === 'DEBIT') {
-        accounts[line.accountCode].debitMinor += line.amountMinor;
+        accounts[accountKey].debitMinor += line.amountMinor;
         currencyTotals[c].debitsMinor += line.amountMinor;
         grandTotalDebits += line.amountMinor;
       } else {
-        accounts[line.accountCode].creditMinor += line.amountMinor;
+        accounts[accountKey].creditMinor += line.amountMinor;
         currencyTotals[c].creditsMinor += line.amountMinor;
         grandTotalCredits += line.amountMinor;
       }
@@ -1146,12 +1153,41 @@ router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRol
 // Financial Statements: Income Statement (P&L) (Multi-Currency Aware)
 router.get('/workspaces/:workspaceId/reports/income-statement', requireWorkspaceRole, asyncHandler(async (req, res) => {
   const workspaceId = req.params.workspaceId;
-  const [settlements, expenses] = await Promise.all([
-    prisma.settlement.findMany({ where: { workspaceId } }),
-    prisma.expense.findMany({ where: { workspaceId, status: { in: ['APPROVED', 'PAID'] } } })
-  ]);
 
-  const totalRevenueMinor = settlements.reduce((sum, s) => sum + s.amountMinor, 0n);
+  // Retrieve revenue from posted GAAP Revenue accounts (4000 series)
+  const revenueJournalLines = await prisma.journalLine.findMany({
+    where: {
+      accountCode: { startsWith: '4' },
+      entry: { workspaceId, status: 'POSTED' }
+    }
+  });
+
+  let totalRevenueMinor = 0n;
+  for (const l of revenueJournalLines) {
+    if (l.side === 'CREDIT') {
+      totalRevenueMinor += l.amountMinor;
+    } else {
+      totalRevenueMinor -= l.amountMinor;
+    }
+  }
+
+  // If no 4000-series accounts have posted yet, derive from invoice allocations or settlements
+  if (totalRevenueMinor <= 0n) {
+    const invoiceAllocations = await prisma.invoiceAllocation.findMany({
+      where: { invoice: { workspaceId } }
+    });
+    if (invoiceAllocations.length > 0) {
+      totalRevenueMinor = invoiceAllocations.reduce((sum, a) => sum + a.amountMinor, 0n);
+    } else {
+      const settlements = await prisma.settlement.findMany({ where: { workspaceId } });
+      totalRevenueMinor = settlements.reduce((sum, s) => sum + s.amountMinor, 0n);
+    }
+  }
+
+  const expenses = await prisma.expense.findMany({
+    where: { workspaceId, status: { in: ['APPROVED', 'PAID'] } }
+  });
+
   const expensesByCategory = {};
   let totalExpenseMinor = 0n;
 
