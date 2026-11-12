@@ -1537,14 +1537,17 @@ function EmptyWorkspace({ onCreated }) {
         </Field>
         <Field label="Workspace type">
           <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
-            <option value="PERSONAL">Personal</option>
-            <option value="GROUP">Group</option>
+            <option value="GROUP">Group / Chama</option>
+            <option value="COMMUNITY">Community / Table Bank</option>
+            <option value="SME">SME / Business</option>
             <option value="ORGANISATION">Organisation</option>
+            <option value="PERSONAL">Personal</option>
           </select>
         </Field>
         <Field label="Currency">
           <select value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })}>
             <option>KES</option>
+            <option>ZAR</option>
             <option>USD</option>
             <option>EUR</option>
             <option>GBP</option>
@@ -1757,8 +1760,10 @@ function Modal({ type, onClose, onSubmit, busy, members }) {
               title: form.title,
               description: form.description,
               targetMinor: Math.round(parseFloat(form.target || '0') * 100),
+              targetAmount: form.target,
               startsAt: form.startsAt ? new Date(form.startsAt).toISOString() : undefined,
-              endsAt: form.endsAt ? new Date(form.endsAt).toISOString() : undefined
+              endsAt: form.endsAt ? new Date(form.endsAt).toISOString() : undefined,
+              deadline: form.endsAt ? new Date(form.endsAt).toISOString() : undefined
             });
           } else if (type === 'expense') {
             onSubmit('expense', {
@@ -1778,8 +1783,10 @@ function Modal({ type, onClose, onSubmit, busy, members }) {
           } else if (type === 'recurring') {
             onSubmit('recurring', {
               title: form.title,
+              amount: form.amount,
               amountMinor: Math.round(parseFloat(form.amount || '0') * 100),
               interval: form.interval,
+              frequency: form.interval,
               nextRunAt: form.dueAt ? new Date(form.dueAt).toISOString() : new Date().toISOString()
             });
           } else if (type === 'anchor') {

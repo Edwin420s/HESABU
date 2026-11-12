@@ -8,10 +8,13 @@ This directory outlines the Stellar Soroban smart contracts developed for HESABU
 
 The smart contracts are located in `contracts/soroban/contracts/` and written in Rust using `soroban-sdk`.
 
-| Contract | Purpose | Key Functions |
-|---|---|---|
-| **`hesabu_anchor`** | Canonical Statement Anchors | `anchor_statement`, `get_anchor`, `verify_statement`, `get_anchor_count` |
-| **`hesabu_escrow`** | Programmable Dual-Approval Escrow | `create_request`, `approve_request`, `execute_payout`, `get_request` |
+| Contract | Purpose | Status | Key Functions |
+|---|---|---|---|
+| **`hesabu_anchor`** | Canonical Statement Anchors | **Implemented & Tested** | `anchor_statement`, `get_anchor`, `verify_statement`, `get_anchor_count` |
+| **`hesabu_escrow`** | Programmable Dual-Approval Escrow | **Experimental (Testnet Only)** | `create_request`, `approve_request`, `execute_payout`, `get_request` |
+
+> [!WARNING]
+> **Production Deployment Status**: `hesabu_escrow` is currently designated for testnet experimentation only. Do not deploy the escrow contract to Stellar Public Mainnet until formal multi-signature governance, refund timelocks, and token whitelisting are implemented. `hesabu_anchor` is verified for cryptographic period anchoring.
 
 ---
 

@@ -21,18 +21,26 @@ router.get('/workspaces/:workspaceId/recurring', requireWorkspaceRole, asyncHand
 router.post('/workspaces/:workspaceId/recurring', requireWorkspaceRole, allowRoles('OWNER', 'ADMIN', 'FINANCE_MANAGER'), asyncHandler(async (req, res) => {
   const data = z.object({
     title: z.string().trim().min(2).max(120),
-    frequency: z.enum(['WEEKLY', 'MONTHLY', 'QUARTERLY']),
-    amount: z.union([z.string(), z.number()]),
+    frequency: z.enum(['WEEKLY', 'MONTHLY', 'QUARTERLY']).optional(),
+    interval: z.string().optional(),
+    amount: z.union([z.string(), z.number()]).optional(),
+    amountMinor: z.union([z.string(), z.number(), z.bigint()]).optional(),
     nextRunAt: z.string().datetime().optional()
   }).parse(req.body);
+
+  const freq = (data.frequency || data.interval || 'MONTHLY').toUpperCase();
+  const validFreq = ['WEEKLY', 'MONTHLY', 'QUARTERLY'].includes(freq) ? freq : 'MONTHLY';
+  const amountMinor = data.amountMinor !== undefined
+    ? BigInt(data.amountMinor)
+    : parseMinorUnits(data.amount || '0');
 
   const workspace = await prisma.workspace.findUnique({ where: { id: req.params.workspaceId } });
   const schedule = await prisma.recurringSchedule.create({
     data: {
       workspaceId: workspace.id,
       title: data.title,
-      frequency: data.frequency,
-      amountMinor: parseMinorUnits(data.amount),
+      frequency: validFreq,
+      amountMinor,
       currency: workspace.currency,
       nextRunAt: data.nextRunAt ? new Date(data.nextRunAt) : new Date(Date.now() + 30 * 86400000)
     }

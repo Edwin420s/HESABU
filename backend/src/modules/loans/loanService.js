@@ -228,6 +228,10 @@ export class LoanService {
     const loan = await prisma.tableLoan.findUnique({ where: { id: loanId } });
     if (!loan) throw new AppError('Loan not found', 404);
 
+    if (loan.status !== 'APPROVED') {
+      throw new AppError(`Cannot disburse loan in status "${loan.status}". Loan must be in "APPROVED" status before disbursement.`, 400);
+    }
+
     const updated = await prisma.tableLoan.update({
       where: { id: loanId },
       data: { status: 'ACTIVE' },
@@ -258,6 +262,29 @@ export class LoanService {
           paymentRef: transactionRef || `REP-${Date.now()}`
         }
       });
+
+      // Allocate repayment progressively across schedule rows
+      let unallocated = repaymentAmount;
+      for (const row of loan.scheduleRows || []) {
+        if (unallocated <= 0n) break;
+        if (row.status === 'PAID') continue;
+        const rowDue = row.totalDueMinor;
+        const rowPaid = (row.principalPaidMinor || 0n) + (row.interestPaidMinor || 0n);
+        const rowRemaining = rowDue > rowPaid ? rowDue - rowPaid : 0n;
+        if (rowRemaining > 0n) {
+          const allocateToRow = unallocated < rowRemaining ? unallocated : rowRemaining;
+          const newRowPaid = rowPaid + allocateToRow;
+          const rowStatus = newRowPaid >= rowDue ? 'PAID' : 'PARTIALLY_PAID';
+          await tx.loanScheduleRow.update({
+            where: { id: row.id },
+            data: {
+              principalPaidMinor: (row.principalPaidMinor || 0n) + allocateToRow,
+              status: rowStatus
+            }
+          });
+          unallocated -= allocateToRow;
+        }
+      }
 
       const updated = await tx.tableLoan.update({
         where: { id: loan.id },
@@ -297,6 +324,8 @@ export class LoanService {
       REJECTED: 'REJECTED'
     };
 
+    const totalRepaidMinor = Number(l.totalPayableMinor - l.balanceMinor);
+
     return {
       id: l.id,
       workspaceId: l.workspaceId,
@@ -312,6 +341,7 @@ export class LoanService {
       monthlyPaymentMinor: Number(l.monthlyPaymentMinor),
       outstandingMinor: Number(l.balanceMinor),
       balanceMinor: Number(l.balanceMinor),
+      totalRepaidMinor,
       status: statusMap[l.status] || l.status,
       createdAt: l.createdAt,
       installments

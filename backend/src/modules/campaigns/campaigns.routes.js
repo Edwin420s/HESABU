@@ -50,19 +50,26 @@ router.post('/workspaces/:workspaceId/campaigns', requireWorkspaceRole, allowRol
   const data = z.object({
     title: z.string().trim().min(2).max(120),
     description: z.string().max(1000).optional(),
-    targetAmount: z.union([z.string(), z.number()]),
-    deadline: z.string().datetime().optional()
+    targetAmount: z.union([z.string(), z.number()]).optional(),
+    targetMinor: z.union([z.string(), z.number(), z.bigint()]).optional(),
+    deadline: z.string().datetime().optional(),
+    endsAt: z.string().datetime().optional()
   }).parse(req.body);
 
   const workspace = await prisma.workspace.findUnique({ where: { id: req.params.workspaceId } });
+  const targetAmountMinor = data.targetMinor !== undefined
+    ? BigInt(data.targetMinor)
+    : parseMinorUnits(data.targetAmount || '0');
+  const targetDeadline = data.deadline || data.endsAt;
+
   const campaign = await prisma.campaign.create({
     data: {
       workspaceId: workspace.id,
       title: data.title,
       description: data.description,
-      targetAmountMinor: parseMinorUnits(data.targetAmount),
+      targetAmountMinor,
       currency: workspace.currency,
-      deadline: data.deadline ? new Date(data.deadline) : null
+      deadline: targetDeadline ? new Date(targetDeadline) : null
     }
   });
 

@@ -81,6 +81,35 @@ loanRouter.post('/workspaces/:workspaceId/loans/apply', async (req, res, next) =
 });
 
 /**
+ * POST /api/loans/:loanId/approve
+ * Approve loan application
+ */
+loanRouter.post('/loans/:loanId/approve', async (req, res, next) => {
+  try {
+    const { loanId } = req.params;
+    const loan = await loanService.getLoan(loanId);
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_workspaceId: {
+          workspaceId: loan.workspaceId,
+          userId: req.user.id,
+        },
+      },
+    });
+
+    if (!membership || !['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(membership.role)) {
+      throw new AppError('Only Owners, Admins, or Finance Managers can approve loans.', 403, 'FORBIDDEN');
+    }
+
+    const updated = await loanService.approveLoan(loanId, membership.id);
+    res.json(jsonSafe(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * POST /api/loans/:loanId/disburse
  * Disburse principal to borrower
  */

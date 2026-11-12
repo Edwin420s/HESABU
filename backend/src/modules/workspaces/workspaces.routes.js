@@ -19,14 +19,27 @@ router.get('/', asyncHandler(async (req, res) => {
 router.post('/', asyncHandler(async (req, res) => {
   const data = z.object({
     name: z.string().trim().min(2).max(100),
-    type: z.enum(['PERSONAL', 'GROUP', 'ORGANISATION']),
-    currency: z.string().length(3).default('KES')
+    type: z.enum(['PERSONAL', 'GROUP', 'COMMUNITY', 'SME', 'ORGANISATION']).default('GROUP'),
+    currency: z.string().length(3).default('KES'),
+    country: z.enum(['KE', 'ZA']).optional(),
+    profile: z.enum(['GROUP', 'BUSINESS', 'ORGANISATION']).optional(),
+    taxNumber: z.string().optional()
   }).parse(req.body);
+
+  const currency = data.currency.toUpperCase();
+  const country = data.country || (currency === 'ZAR' ? 'ZA' : 'KE');
+  const vatRate = country === 'ZA' ? 0.15 : 0.16;
+  const profile = data.profile || (data.type === 'SME' ? 'BUSINESS' : data.type === 'COMMUNITY' || data.type === 'GROUP' ? 'GROUP' : 'ORGANISATION');
 
   const workspace = await prisma.workspace.create({
     data: {
-      ...data,
-      currency: data.currency.toUpperCase(),
+      name: data.name,
+      type: data.type,
+      currency,
+      country,
+      profile,
+      vatRate,
+      taxNumber: data.taxNumber || null,
       createdById: req.user.id,
       memberships: { create: { userId: req.user.id, role: 'OWNER' } }
     }
