@@ -79,4 +79,39 @@ describe('Agentic Finance Engine & Specialized Subagents', () => {
     });
     expect(expRes.agentInvoked).toBe('ExpenseAgent');
   });
+
+  it('exposes typed agent tools registry and allows authorized execution over HTTP', async () => {
+    // List tools
+    const toolsRes = await request(app)
+      .get(`/api/workspaces/${workspace.id}/agent/tools`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(toolsRes.status).toBe(200);
+    expect(Array.isArray(toolsRes.body.tools)).toBe(true);
+    expect(toolsRes.body.tools.length).toBeGreaterThanOrEqual(4);
+
+    const collectTool = toolsRes.body.tools.find(t => t.name === 'collect_receivables');
+    expect(collectTool).toBeDefined();
+    expect(collectTool.parameters).toBeDefined();
+
+    // Execute tool
+    const execRes = await request(app)
+      .post(`/api/workspaces/${workspace.id}/agent/tools/execute`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ toolName: 'collect_receivables' });
+
+    expect(execRes.status).toBe(200);
+    expect(execRes.body.execution).toBeDefined();
+    expect(execRes.body.execution.tool.name).toBe('collect_receivables');
+    expect(execRes.body.execution.result.agent).toBe('CollectionsAgent');
+
+    // Run expense audit endpoint
+    const auditRes = await request(app)
+      .get(`/api/workspaces/${workspace.id}/agent/expense-audit`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(auditRes.status).toBe(200);
+    expect(auditRes.body.expenseAudit).toBeDefined();
+    expect(auditRes.body.expenseAudit.agent).toBe('ExpenseAgent');
+  });
 });

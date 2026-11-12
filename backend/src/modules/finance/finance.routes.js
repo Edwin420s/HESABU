@@ -1257,6 +1257,40 @@ router.get('/workspaces/:workspaceId/agent/treasury', requireWorkspaceRole, asyn
   res.json({ treasury: jsonSafe(result) });
 }));
 
+router.get('/workspaces/:workspaceId/agent/expense-audit', requireWorkspaceRole, asyncHandler(async (req, res) => {
+  const workspaceId = req.params.workspaceId;
+  const result = await agenticFinanceEngine.runExpenseAgent({ workspaceId });
+  res.json({ expenseAudit: jsonSafe(result) });
+}));
+
+router.get('/workspaces/:workspaceId/agent/tools', requireWorkspaceRole, asyncHandler(async (req, res) => {
+  const tools = agenticFinanceEngine.getToolRegistry();
+  res.json({ tools });
+}));
+
+router.post('/workspaces/:workspaceId/agent/tools/execute', requireWorkspaceRole, asyncHandler(async (req, res) => {
+  const { toolName } = z.object({
+    toolName: z.enum(['collect_receivables', 'reconcile_ledger', 'forecast_treasury', 'audit_expenses'])
+  }).parse(req.body);
+
+  const workspaceId = req.params.workspaceId;
+  const membership = req.membership;
+
+  const tools = agenticFinanceEngine.getToolRegistry();
+  const toolDef = tools.find(t => t.name === toolName);
+  if (!toolDef.requiredRoles.includes(membership.role)) {
+    throw new AppError(`Role "${membership.role}" is not authorized to execute tool "${toolName}". Required: ${toolDef.requiredRoles.join(', ')}.`, 403);
+  }
+
+  const execution = await agenticFinanceEngine.executeTool({
+    toolName,
+    workspaceId,
+    actorId: req.user.id
+  });
+
+  res.json({ execution: jsonSafe(execution) });
+}));
+
 router.get('/workspaces/:workspaceId/dashboard', requireWorkspaceRole, asyncHandler(async (req, res) => {
   const workspaceId = req.params.workspaceId;
   const [obligations, settlements, expenses, pendingExpenses, payments, campaigns, reimbursements] = await Promise.all([

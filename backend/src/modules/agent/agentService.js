@@ -359,6 +359,115 @@ export class AgenticFinanceEngine {
       toolData: { collections: collections.metrics, treasury: treasury.netCashBalances, recon: recon.health }
     };
   }
+
+  /**
+   * Typed Agent Tool Registry with JSON Schema definitions and RBAC requirements
+   */
+  getToolRegistry() {
+    return [
+      {
+        name: 'collect_receivables',
+        description: 'Analyzes outstanding obligations, debtor accounts, and calculates true remaining balances.',
+        parameters: {
+          type: 'object',
+          properties: {
+            workspaceId: { type: 'string', description: 'Target workspace identifier' }
+          },
+          required: ['workspaceId']
+        },
+        requiredRoles: ['OWNER', 'ADMIN', 'FINANCE_MANAGER', 'APPROVER', 'MEMBER']
+      },
+      {
+        name: 'reconcile_ledger',
+        description: 'Verifies multi-rail settlements against obligations and tests trial balance per-currency equilibrium.',
+        parameters: {
+          type: 'object',
+          properties: {
+            workspaceId: { type: 'string', description: 'Target workspace identifier' }
+          },
+          required: ['workspaceId']
+        },
+        requiredRoles: ['OWNER', 'ADMIN', 'FINANCE_MANAGER']
+      },
+      {
+        name: 'forecast_treasury',
+        description: 'Computes net available cash by currency, upcoming liabilities, and uncommitted runway.',
+        parameters: {
+          type: 'object',
+          properties: {
+            workspaceId: { type: 'string', description: 'Target workspace identifier' }
+          },
+          required: ['workspaceId']
+        },
+        requiredRoles: ['OWNER', 'ADMIN', 'FINANCE_MANAGER']
+      },
+      {
+        name: 'audit_expenses',
+        description: 'Detects duplicate claims, category anomalies, and expenses exceeding workspace governance thresholds.',
+        parameters: {
+          type: 'object',
+          properties: {
+            workspaceId: { type: 'string', description: 'Target workspace identifier' }
+          },
+          required: ['workspaceId']
+        },
+        requiredRoles: ['OWNER', 'ADMIN', 'FINANCE_MANAGER']
+      }
+    ];
+  }
+
+  /**
+   * Executes a registered typed tool with schema validation, permission checks, and audit logging
+   */
+  async executeTool({ toolName, workspaceId, actorId }) {
+    const tools = this.getToolRegistry();
+    const toolDef = tools.find(t => t.name === toolName);
+    if (!toolDef) {
+      throw new Error(`Agent tool "${toolName}" is not registered in the tool registry.`);
+    }
+
+    let result;
+    switch (toolName) {
+      case 'collect_receivables':
+        result = await this.runCollectionsAgent({ workspaceId });
+        break;
+      case 'reconcile_ledger':
+        result = await this.runReconciliationAgent({ workspaceId });
+        break;
+      case 'forecast_treasury':
+        result = await this.runTreasuryAgent({ workspaceId });
+        break;
+      case 'audit_expenses':
+        result = await this.runExpenseAgent({ workspaceId });
+        break;
+      default:
+        throw new Error(`Unhandled tool implementation: ${toolName}`);
+    }
+
+    // Persist tool execution audit trail
+    if (workspaceId && prisma?.auditLog) {
+      await prisma.auditLog.create({
+        data: {
+          workspaceId,
+          actorId: actorId || null,
+          action: 'AGENT_TOOL_EXECUTED',
+          entityType: 'AgentTool',
+          entityId: toolName,
+          details: {
+            toolName,
+            executedAt: new Date().toISOString(),
+            status: 'SUCCESS'
+          }
+        }
+      }).catch(() => {});
+    }
+
+    return {
+      tool: toolDef,
+      result,
+      executedAt: new Date().toISOString()
+    };
+  }
 }
 
 export const agenticFinanceEngine = new AgenticFinanceEngine();
