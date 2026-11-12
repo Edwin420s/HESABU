@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { LoanService } from '../src/modules/loans/loanService.js';
+import { prisma } from '../src/config/prisma.js';
 
 describe('Table Banking & Peer Lending Loan Engine', () => {
   let loans;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     loans = new LoanService();
+    try {
+      await prisma.tableLoan.deleteMany({ where: { workspaceId: 'ws_demo' } });
+    } catch (_) {}
   });
 
   it('calculates flat rate amortization schedule accurately', () => {
@@ -28,8 +32,8 @@ describe('Table Banking & Peer Lending Loan Engine', () => {
     );
   });
 
-  it('manages full loan lifecycle from application to full settlement', () => {
-    const loan = loans.applyLoan({
+  it('manages full loan lifecycle from application to full settlement', async () => {
+    const loan = await loans.applyLoan({
       workspaceId: 'ws_demo',
       memberId: 'm_borrower_1',
       principalMinor: 5000000, // 50,000 KES
@@ -42,26 +46,26 @@ describe('Table Banking & Peer Lending Loan Engine', () => {
     expect(loan.status).toBe('PENDING_APPROVAL');
 
     // Borrower cannot approve own loan
-    expect(() => {
-      loans.approveLoan(loan.id, 'm_borrower_1');
-    }).toThrow('Borrower cannot approve their own loan application');
+    await expect(
+      loans.approveLoan(loan.id, 'm_borrower_1')
+    ).rejects.toThrow('Borrower cannot approve their own loan application');
 
     // Approver approves
-    loans.approveLoan(loan.id, 'm_admin_approver');
-    expect(loan.status).toBe('APPROVED');
+    const approved = await loans.approveLoan(loan.id, 'm_admin_approver');
+    expect(approved.status).toBe('APPROVED');
 
     // Disburse
-    loans.disburseLoan(loan.id);
-    expect(loan.status).toBe('DISBURSED');
+    const disbursed = await loans.disburseLoan(loan.id);
+    expect(disbursed.status).toBe('DISBURSED');
 
     // Partial Repayment
-    const rep1 = loans.recordRepayment(loan.id, 2000000, 'MPESA_REF_1');
+    const rep1 = await loans.recordRepayment(loan.id, 2000000, 'MPESA_REF_1');
     expect(rep1.status).toBe('PARTIALLY_REPAID');
     expect(rep1.totalRepaidMinor).toBe(2000000);
     expect(rep1.outstandingMinor).toBe(loan.totalPayableMinor - 2000000);
 
     // Final Repayment
-    const rep2 = loans.recordRepayment(loan.id, rep1.outstandingMinor, 'MPESA_REF_2');
+    const rep2 = await loans.recordRepayment(loan.id, rep1.outstandingMinor, 'MPESA_REF_2');
     expect(rep2.status).toBe('FULLY_REPAID');
     expect(rep2.outstandingMinor).toBe(0);
   });

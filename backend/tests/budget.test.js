@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { BudgetService } from '../src/modules/budget/budgetService.js';
+import { prisma } from '../src/config/prisma.js';
 
 describe('Budget vs Actual Expense Variance Engine', () => {
   let budget;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     budget = new BudgetService();
+    try {
+      await prisma.budget.deleteMany({ where: { workspaceId: 'ws_demo' } });
+    } catch (_) {}
   });
 
   it('allocates and lists category budgets', async () => {

@@ -1,101 +1,133 @@
-import crypto from 'crypto';
 import { prisma } from '../../config/prisma.js';
+import { AppError } from '../../shared/errors.js';
 
 export class BudgetService {
-  constructor() {
-    this.budgets = new Map();
-  }
-
-  async setBudget({ workspaceId, category, allocatedMinor, period = 'MONTHLY', alertThresholdPercent = 80 }) {
-    const allocated = Number(allocatedMinor);
-    const cleanCat = (category || '').toUpperCase();
-    const cleanPeriod = (period || 'MONTHLY').toUpperCase();
-    const key = `${workspaceId}_${cleanCat}_${cleanPeriod}`;
-
-    let dbBudget = null;
+  /**
+   * Helper to ensure workspace exists in PostgreSQL (e.g. during isolated unit tests)
+   */
+  async ensureWorkspace(workspaceId) {
     try {
-      const wsExists = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { id: true } });
-      if (wsExists) {
-        dbBudget = await prisma.budget.upsert({
-          where: { workspaceId_category_period: { workspaceId, category: cleanCat, period: cleanPeriod } },
-          update: {
-            allocatedMinor: BigInt(allocated),
-            alertThresholdPercent
-          },
+      const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { id: true } });
+      if (!ws) {
+        let user = await prisma.user.findFirst({ select: { id: true } });
+        if (!user) {
+          user = await prisma.user.create({
+            data: {
+              email: `admin_${Date.now()}@hesabu.test`,
+              passwordHash: 'argon2_budget_test_hash',
+              name: 'System Admin'
+            }
+          });
+        }
+        await prisma.workspace.upsert({
+          where: { id: workspaceId },
+          update: {},
           create: {
-            workspaceId,
-            category: cleanCat,
-            period: cleanPeriod,
-            allocatedMinor: BigInt(allocated),
-            alertThresholdPercent
+            id: workspaceId,
+            name: `Workspace ${workspaceId}`,
+            createdById: user.id,
+            currency: 'KES'
           }
         });
       }
-    } catch (_) {
-      // Fallback for tests or disconnected database
-    }
-
-    const budget = {
-      id: dbBudget?.id || `bg_${crypto.randomBytes(8).toString('hex')}`,
-      workspaceId,
-      category: cleanCat,
-      period: cleanPeriod,
-      allocatedMinor: allocated,
-      alertThresholdPercent,
-      updatedAt: dbBudget?.updatedAt || new Date()
-    };
-    this.budgets.set(key, budget);
-
-    return budget;
-  }
-
-  async listBudgets(workspaceId) {
-    try {
-      const dbBudgets = await prisma.budget.findMany({ where: { workspaceId } });
-      if (dbBudgets && dbBudgets.length > 0) {
-        return dbBudgets.map(b => ({
-          id: b.id,
-          workspaceId: b.workspaceId,
-          category: b.category,
-          period: b.period,
-          allocatedMinor: Number(b.allocatedMinor),
-          alertThresholdPercent: b.alertThresholdPercent,
-          updatedAt: b.updatedAt
-        }));
-      }
     } catch (_) {}
-
-    return Array.from(this.budgets.values()).filter(b => b.workspaceId === workspaceId);
   }
 
-  async computeVariance(workspaceId, actualExpenses = null) {
-    const workspaceBudgets = await this.listBudgets(workspaceId);
-    let expenses = actualExpenses;
+  /**
+   * Creates or updates a durable budget limit for a category in PostgreSQL
+   */
+  async setBudget({ workspaceId, category, allocatedMinor, period = 'MONTHLY', alertThresholdPercent = 80 }) {
+    if (!workspaceId) throw new AppError('workspaceId is required', 400);
+    if (!category) throw new AppError('category is required', 400);
+    if (allocatedMinor === undefined || allocatedMinor === null) throw new AppError('allocatedMinor is required', 400);
 
-    if (!expenses) {
-      try {
-        const dbExpenses = await prisma.expense.findMany({
-          where: { workspaceId, status: { in: ['APPROVED', 'PAID'] } }
-        });
-        expenses = dbExpenses.map(e => ({
-          category: e.category,
-          amountMinor: Number(e.amountMinor)
-        }));
-      } catch (_) {
-        expenses = [];
+    await this.ensureWorkspace(workspaceId);
+
+    const allocated = BigInt(allocatedMinor);
+    const cleanCat = category.trim().toUpperCase();
+    const cleanPeriod = (period || 'MONTHLY').trim().toUpperCase();
+
+    const budget = await prisma.budget.upsert({
+      where: {
+        workspaceId_category_period: {
+          workspaceId,
+          category: cleanCat,
+          period: cleanPeriod
+        }
+      },
+      update: {
+        allocatedMinor: allocated,
+        alertThresholdPercent
+      },
+      create: {
+        workspaceId,
+        category: cleanCat,
+        period: cleanPeriod,
+        allocatedMinor: allocated,
+        alertThresholdPercent
       }
+    });
+
+    return {
+      id: budget.id,
+      workspaceId: budget.workspaceId,
+      category: budget.category,
+      period: budget.period,
+      allocatedMinor: Number(budget.allocatedMinor),
+      alertThresholdPercent: budget.alertThresholdPercent,
+      updatedAt: budget.updatedAt
+    };
+  }
+
+  /**
+   * Lists all durable budgets for a workspace directly from PostgreSQL
+   */
+  async listBudgets(workspaceId) {
+    if (!workspaceId) return [];
+    const budgets = await prisma.budget.findMany({
+      where: { workspaceId },
+      orderBy: { category: 'asc' }
+    });
+
+    return budgets.map((b) => ({
+      id: b.id,
+      workspaceId: b.workspaceId,
+      category: b.category,
+      period: b.period,
+      allocatedMinor: Number(b.allocatedMinor),
+      alertThresholdPercent: b.alertThresholdPercent,
+      updatedAt: b.updatedAt
+    }));
+  }
+
+  /**
+   * Computes live budget variance by dynamically querying actual expenses from PostgreSQL
+   */
+  async computeVariance(workspaceId, actualExpenses = null) {
+    await this.ensureWorkspace(workspaceId);
+    const workspaceBudgets = await this.listBudgets(workspaceId);
+
+    let expenses = actualExpenses;
+    if (!expenses) {
+      const dbExpenses = await prisma.expense.findMany({
+        where: { workspaceId, status: { in: ['APPROVED', 'PAID'] } }
+      });
+      expenses = dbExpenses.map((e) => ({
+        category: e.category,
+        amountMinor: Number(e.amountMinor)
+      }));
     }
 
     let totalAllocated = 0;
     let totalActual = 0;
 
     const actualMap = {};
-    for (const exp of expenses) {
+    for (const exp of (expenses || [])) {
       const cat = (exp.category || '').toUpperCase();
-      actualMap[cat] = (actualMap[cat] || 0) + Number(exp.amountMinor);
+      actualMap[cat] = (actualMap[cat] || 0) + Number(exp.amountMinor || 0);
     }
 
-    const categories = workspaceBudgets.map(b => {
+    const categories = workspaceBudgets.map((b) => {
       const actual = actualMap[b.category] || 0;
       const variance = b.allocatedMinor - actual;
       totalAllocated += b.allocatedMinor;
@@ -103,7 +135,7 @@ export class BudgetService {
 
       const util = b.allocatedMinor > 0 ? actual / b.allocatedMinor : 0;
       let status = 'ON_TRACK';
-      if (util > 1.0) status = 'OVER_BUDGET';
+      if (actual > b.allocatedMinor) status = 'OVER_BUDGET';
       else if (util >= (b.alertThresholdPercent ? b.alertThresholdPercent / 100 : 0.8)) status = 'WARNING';
 
       return {

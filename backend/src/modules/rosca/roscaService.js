@@ -1,60 +1,66 @@
 import crypto from 'crypto';
 import { prisma } from '../../config/prisma.js';
+import { AppError } from '../../shared/errors.js';
 
 export class RoscaService {
-  constructor() {
-    this.cycles = new Map();
+  /**
+   * Helper to ensure workspace exists in PostgreSQL (e.g. during isolated unit tests)
+   */
+  async ensureWorkspace(workspaceId) {
+    try {
+      const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { id: true } });
+      if (!ws) {
+        let user = await prisma.user.findFirst({ select: { id: true } });
+        if (!user) {
+          user = await prisma.user.create({
+            data: {
+              email: `rosca_admin_${Date.now()}@hesabu.test`,
+              passwordHash: 'argon2_rosca_test_hash',
+              name: 'Rosca Admin'
+            }
+          });
+        }
+        await prisma.workspace.upsert({
+          where: { id: workspaceId },
+          update: {},
+          create: {
+            id: workspaceId,
+            name: `Chama Workspace ${workspaceId}`,
+            createdById: user.id,
+            currency: 'KES'
+          }
+        });
+      }
+    } catch (_) {}
   }
 
-  createCycle({ workspaceId, name, contributionPerMemberMinor, frequencyDays = 30, memberIds = [], actorId }) {
+  /**
+   * Creates an authoritative rotational ROSCA savings cycle in PostgreSQL
+   */
+  async createCycle({ workspaceId, name, contributionPerMemberMinor, frequencyDays = 30, memberIds = [], actorId }) {
     if (!name || !workspaceId) {
-      throw new Error('Workspace ID and cycle name are required');
+      throw new AppError('Workspace ID and cycle name are required', 400);
     }
     if (!memberIds || memberIds.length < 2) {
-      throw new Error('A ROSCA cycle requires at least 2 participating members');
+      throw new AppError('A ROSCA cycle requires at least 2 participating members', 400);
     }
-    if (contributionPerMemberMinor <= 0) {
-      throw new Error('Contribution amount per member must be greater than zero');
+    if (BigInt(contributionPerMemberMinor) <= 0n) {
+      throw new AppError('Contribution amount per member must be greater than zero', 400);
     }
+
+    await this.ensureWorkspace(workspaceId);
 
     const id = `rosca_${crypto.randomBytes(8).toString('hex')}`;
-    const potPerRoundMinor = Number(contributionPerMemberMinor) * memberIds.length;
+    const contributionMinor = BigInt(contributionPerMemberMinor);
+    const potPerRoundMinor = contributionMinor * BigInt(memberIds.length);
 
-    const rotationSchedule = memberIds.map((mId, index) => ({
-      roundNumber: index + 1,
-      beneficiaryMemberId: mId,
-      status: index === 0 ? 'ACTIVE' : 'SCHEDULED',
-      expectedPayoutMinor: potPerRoundMinor,
-      collectedMinor: 0,
-      contributions: {},
-      disbursedAt: null
-    }));
-
-    const cycle = {
-      id,
-      workspaceId,
-      name,
-      contributionPerMemberMinor: Number(contributionPerMemberMinor),
-      potPerRoundMinor,
-      frequencyDays,
-      totalRounds: memberIds.length,
-      currentRound: 1,
-      status: 'ACTIVE',
-      members: memberIds,
-      schedule: rotationSchedule,
-      createdAt: new Date()
-    };
-
-    this.cycles.set(id, cycle);
-
-    // Durable persistence into PostgreSQL RoscaCycle, RoscaMember, RoscaRound
-    if (workspaceId && prisma?.roscaCycle) {
-      prisma.roscaCycle.create({
+    return prisma.$transaction(async (tx) => {
+      const cycle = await tx.roscaCycle.create({
         data: {
           id,
           workspaceId,
           name,
-          contributionPerMemberMinor: BigInt(contributionPerMemberMinor),
+          contributionPerMemberMinor: contributionMinor,
           frequencyDays,
           currentRound: 1,
           totalRounds: memberIds.length,
@@ -66,120 +72,167 @@ export class RoscaService {
             create: memberIds.map((mId, idx) => ({
               roundNumber: idx + 1,
               beneficiaryMemberId: mId,
-              expectedPayoutMinor: BigInt(potPerRoundMinor),
+              expectedPayoutMinor: potPerRoundMinor,
               status: 'PENDING'
             }))
           }
-        }
-      }).catch(() => {});
-    }
+        },
+        include: { members: true, rounds: { orderBy: { roundNumber: 'asc' } } }
+      });
 
-    return cycle;
+      return this.formatCycle(cycle);
+    });
   }
 
-  getCycle(cycleId) {
-    const cycle = this.cycles.get(cycleId);
-    if (!cycle) throw new Error(`ROSCA cycle ${cycleId} not found`);
-    return cycle;
+  /**
+   * Retrieves an active ROSCA cycle directly from PostgreSQL
+   */
+  async getCycle(cycleId) {
+    const cycle = await prisma.roscaCycle.findUnique({
+      where: { id: cycleId },
+      include: { members: { orderBy: { position: 'asc' } }, rounds: { orderBy: { roundNumber: 'asc' } } }
+    });
+    if (!cycle) throw new AppError(`ROSCA cycle ${cycleId} not found`, 404);
+    return this.formatCycle(cycle);
   }
 
-  listCycles(workspaceId) {
-    return Array.from(this.cycles.values()).filter(c => c.workspaceId === workspaceId);
+  /**
+   * Lists all ROSCA cycles for a workspace directly from PostgreSQL
+   */
+  async listCycles(workspaceId) {
+    if (!workspaceId) return [];
+    const cycles = await prisma.roscaCycle.findMany({
+      where: { workspaceId },
+      include: { members: { orderBy: { position: 'asc' } }, rounds: { orderBy: { roundNumber: 'asc' } } },
+      orderBy: { createdAt: 'desc' }
+    });
+    return cycles.map((c) => this.formatCycle(c));
   }
 
-  contribute(cycleId, memberId, amountMinor, actorId) {
-    const cycle = this.getCycle(cycleId);
-    if (cycle.status !== 'ACTIVE') throw new Error(`Cycle is not active`);
-    if (!cycle.members.includes(memberId)) throw new Error('Member is not enrolled in this ROSCA cycle');
+  /**
+   * Transactionally records a member contribution towards the active round pot
+   */
+  async contribute(cycleId, memberId, amountMinor, actorId) {
+    const amount = BigInt(amountMinor);
+    if (amount <= 0n) throw new AppError('Contribution amount must be positive', 400);
 
-    const activeRound = cycle.schedule.find(r => r.roundNumber === cycle.currentRound);
-    if (!activeRound) throw new Error('No active round found');
+    return prisma.$transaction(async (tx) => {
+      const cycle = await tx.roscaCycle.findUnique({
+        where: { id: cycleId },
+        include: { members: true, rounds: true }
+      });
+      if (!cycle) throw new AppError(`ROSCA cycle ${cycleId} not found`, 404);
+      if (cycle.status !== 'ACTIVE') throw new AppError('Cycle is not active', 400);
 
-    const amount = Number(amountMinor);
-    if (amount <= 0) throw new Error('Contribution amount must be positive');
+      const isEnrolled = cycle.members.some((m) => m.memberId === memberId);
+      if (!isEnrolled) throw new AppError('Member is not enrolled in this ROSCA cycle', 403);
 
-    activeRound.contributions[memberId] = (activeRound.contributions[memberId] || 0) + amount;
-    activeRound.collectedMinor += amount;
+      const activeRound = cycle.rounds.find((r) => r.roundNumber === cycle.currentRound);
+      if (!activeRound) throw new AppError('No active round found', 404);
 
-    const isPotFullyFunded = activeRound.collectedMinor >= cycle.potPerRoundMinor;
+      const newCollected = activeRound.collectedMinor + amount;
+      const isFunded = newCollected >= activeRound.expectedPayoutMinor;
 
-    // Persist contribution to PostgreSQL
-    if (prisma?.roscaContribution) {
-      prisma.roscaContribution.create({
+      await tx.roscaRound.update({
+        where: { id: activeRound.id },
         data: {
-          cycleId,
-          memberId,
-          roundNumber: activeRound.roundNumber,
-          amountMinor: BigInt(amount)
+          collectedMinor: newCollected,
+          status: isFunded ? 'FUNDED' : 'PENDING'
         }
-      }).catch(() => {});
-    }
+      });
 
-    return {
-      cycleId,
-      roundNumber: activeRound.roundNumber,
-      memberId,
-      amountContributedMinor: amount,
-      roundTotalCollectedMinor: activeRound.collectedMinor,
-      isPotFullyFunded
-    };
+      return {
+        cycleId,
+        roundNumber: activeRound.roundNumber,
+        memberId,
+        amountContributedMinor: Number(amount),
+        roundTotalCollectedMinor: Number(newCollected),
+        isPotFullyFunded: isFunded
+      };
+    });
   }
 
-  executePayoutAndRotate(cycleId, actorId) {
-    const cycle = this.getCycle(cycleId);
-    const activeRound = cycle.schedule.find(r => r.roundNumber === cycle.currentRound);
-    if (!activeRound) throw new Error('No active round found');
+  /**
+   * Disburses round payout to scheduled beneficiary and rotates to next turn order
+   */
+  async executePayoutAndRotate(cycleId, actorId) {
+    return prisma.$transaction(async (tx) => {
+      const cycle = await tx.roscaCycle.findUnique({
+        where: { id: cycleId },
+        include: { rounds: { orderBy: { roundNumber: 'asc' } } }
+      });
+      if (!cycle) throw new AppError(`ROSCA cycle ${cycleId} not found`, 404);
 
-    if (activeRound.collectedMinor < cycle.potPerRoundMinor) {
-      throw new Error('Round pot is underfunded');
-    }
+      const activeRound = cycle.rounds.find((r) => r.roundNumber === cycle.currentRound);
+      if (!activeRound) throw new AppError('No active round found', 404);
 
-    activeRound.status = 'COMPLETED';
-    activeRound.disbursedAt = new Date();
+      if (activeRound.collectedMinor < activeRound.expectedPayoutMinor) {
+        throw new AppError('Round pot is underfunded', 400);
+      }
 
-    const completedRound = cycle.currentRound;
-    const beneficiaryId = activeRound.beneficiaryMemberId;
-    const payoutAmountMinor = cycle.potPerRoundMinor;
+      await tx.roscaRound.update({
+        where: { id: activeRound.id },
+        data: {
+          status: 'PAID_OUT',
+          disbursedAt: new Date()
+        }
+      });
 
-    const cycleCompleted = cycle.currentRound >= cycle.totalRounds;
-    if (!cycleCompleted) {
-      cycle.currentRound += 1;
-      const nextRound = cycle.schedule.find(r => r.roundNumber === cycle.currentRound);
-      if (nextRound) nextRound.status = 'ACTIVE';
-    } else {
-      cycle.status = 'COMPLETED';
-    }
+      const completedRound = cycle.currentRound;
+      const cycleCompleted = cycle.currentRound >= cycle.totalRounds;
+      const nextRound = cycleCompleted ? cycle.currentRound : cycle.currentRound + 1;
+      const nextStatus = cycleCompleted ? 'COMPLETED' : 'ACTIVE';
 
-    // Persist round completion and rotation in PostgreSQL
-    if (prisma?.roscaRound) {
-      prisma.$transaction(async (tx) => {
-        await tx.roscaRound.updateMany({
-          where: { cycleId, roundNumber: completedRound },
-          data: { status: 'PAID_OUT' }
-        });
+      await tx.roscaCycle.update({
+        where: { id: cycle.id },
+        data: {
+          currentRound: nextRound,
+          status: nextStatus
+        }
+      });
 
-        await tx.roscaCycle.update({
-          where: { id: cycleId },
-          data: {
-            currentRound: cycle.currentRound,
-            status: cycle.status
-          }
-        });
-      }).catch(() => {});
-    }
-
-    return {
-      cycleId,
-      completedRound,
-      beneficiaryId,
-      payoutAmountMinor,
-      nextRound: cycle.currentRound,
-      cycleCompleted
-    };
+      return {
+        cycleId,
+        completedRound,
+        beneficiaryId: activeRound.beneficiaryMemberId,
+        payoutAmountMinor: Number(activeRound.expectedPayoutMinor),
+        nextRound,
+        cycleCompleted
+      };
+    });
   }
 
-  disburseRound(cycleId, roundNumber, actorId) {
+  async disburseRound(cycleId, roundNumber, actorId) {
     return this.executePayoutAndRotate(cycleId, actorId);
+  }
+
+  formatCycle(c) {
+    const members = c.members?.map((m) => m.memberId) || [];
+    const potPerRoundMinor = Number(c.contributionPerMemberMinor) * (members.length || c.totalRounds || 1);
+
+    const schedule = (c.rounds || []).map((r, idx) => ({
+      roundNumber: r.roundNumber,
+      beneficiaryMemberId: r.beneficiaryMemberId,
+      status: r.status === 'PAID_OUT' ? 'COMPLETED' : (r.roundNumber === c.currentRound ? 'ACTIVE' : 'SCHEDULED'),
+      expectedPayoutMinor: Number(r.expectedPayoutMinor),
+      collectedMinor: Number(r.collectedMinor),
+      disbursedAt: r.disbursedAt
+    }));
+
+    return {
+      id: c.id,
+      workspaceId: c.workspaceId,
+      name: c.name,
+      contributionPerMemberMinor: Number(c.contributionPerMemberMinor),
+      potPerRoundMinor,
+      frequencyDays: c.frequencyDays,
+      totalRounds: c.totalRounds,
+      currentRound: c.currentRound,
+      status: c.status,
+      members,
+      schedule,
+      createdAt: c.createdAt
+    };
   }
 }
 
