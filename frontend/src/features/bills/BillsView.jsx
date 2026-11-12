@@ -215,7 +215,7 @@ export function BillsView({ workspaceId, currency, setNotice, refresh }) {
         <Modal title="Register Approved Vendor" onClose={() => setModal('')}>
           <form onSubmit={createSupplier} className="stack">
             <Field label="Vendor / Supplier Name">
-              <input required value={supForm.name} onChange={e => setCustForm ? setCustForm({ ...supForm, name: e.target.value }) : setSupForm({ ...supForm, name: e.target.value })} />
+              <input required value={supForm.name} onChange={e => setSupForm({ ...supForm, name: e.target.value })} />
             </Field>
             <Field label="Accounts Email">
               <input type="email" required value={supForm.email} onChange={e => setSupForm({ ...supForm, email: e.target.value })} />

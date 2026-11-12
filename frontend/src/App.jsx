@@ -658,9 +658,9 @@ function CampaignsHub({ campaigns, currency, onAddContribution }) {
   return (
     <div className="card-grid">
       {campaigns.map(c => {
-        const target = Number(c.targetMinor || 0);
-        const raised = Number(c.raisedMinor || 0);
-        const pct = target > 0 ? Math.min(100, Math.round((raised / target) * 100)) : 0;
+        const target = Number(c.targetAmountMinor || c.targetMinor || 0);
+        const raised = Number(c.collectedMinor || c.raisedMinor || 0);
+        const pct = c.progressPercent !== undefined ? c.progressPercent : (target > 0 ? Math.min(100, Math.round((raised / target) * 100)) : 0);
 
         return (
           <div key={c.id} className="entity-card">
@@ -685,7 +685,7 @@ function CampaignsHub({ campaigns, currency, onAddContribution }) {
             </div>
 
             <div className="entity-card-meta">
-              <span>{c.obligations?.length || 0} contributions pledged</span>
+              <span>{c.obligationsCount || c.obligations?.length || 0} contributions pledged</span>
               <button className="small-button" onClick={() => onAddContribution(c)}>
                 + Add Pledge
               </button>
@@ -739,23 +739,23 @@ function ReimbursementsView({ reimbursements, currency, refresh, setNotice }) {
             {reimbursements.map(r => (
               <tr key={r.id}>
                 <td>
-                  <b>{r.title}</b>
-                  <small>{r.description || 'Out of pocket claim'}</small>
+                  <b>{r.notes || r.expense?.description || `Reimbursement #${r.id.slice(-6).toUpperCase()}`}</b>
+                  <small>{r.expense ? `Linked Expense: ${r.expense.description}` : (r.notes || 'Out of pocket claim')}</small>
                 </td>
-                <td>{r.claimant?.name || r.claimant?.email || 'Member'}</td>
-                <td><span className="quiet-tag">{r.category}</span></td>
+                <td>{r.claimantName || r.claimant?.name || r.claimant?.email || 'Member'}</td>
+                <td><span className="quiet-tag">{r.expense?.category || 'REIMBURSEMENT'}</span></td>
                 <td className="amount">{money(r.amountMinor, currency)}</td>
                 <td>
                   {r.receiptUrl ? (
                     <a href={r.receiptUrl} target="_blank" rel="noreferrer" style={{ color: '#245c46', textDecoration: 'underline', fontSize: '11px' }}>
                       View Receipt
                     </a>
-                  ) : <span className="subtle">No file</span>}
+                  ) : (r.paymentRef ? <span style={{ fontFamily: 'monospace', fontSize: '11px' }}>{r.paymentRef}</span> : <span className="subtle">No file</span>)}
                 </td>
                 <td><Status value={r.status} /></td>
                 <td>
                   <div className="inline-actions">
-                    {r.status === 'SUBMITTED' && (
+                    {(r.status === 'PENDING' || r.status === 'SUBMITTED') && (
                       <>
                         <button className="small-button" onClick={() => handleAction(r.id, 'approve')}>Approve</button>
                         <button className="small-button danger" onClick={() => handleAction(r.id, 'reject')}>Reject</button>

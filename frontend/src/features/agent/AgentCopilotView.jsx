@@ -61,9 +61,9 @@ export function AgentCopilotView({ workspaceId, insights, currency }) {
     <div className="stack">
       <div className="metric-grid">
         <Metric label="Reconciliation Status" value={insights?.reconciliationHealth || 'HEALTHY'} icon={<ShieldCheck />} tone="green" />
-        <Metric label="Total Obligations" value={money(insights?.totalObligationsMinor, currency)} icon={<Wallet />} />
-        <Metric label="Total Settled" value={money(insights?.totalSettledMinor, currency)} icon={<ArrowDownLeft />} tone="green" />
-        <Metric label="Total Outstanding" value={money(insights?.totalOutstandingMinor, currency)} icon={<Activity />} tone="amber" />
+        <Metric label="Matched Settlements" value={insights?.matchedSettlementsCount ?? 0} icon={<Wallet />} />
+        <Metric label="Unmatched Settlements" value={insights?.unmatchedSettlementsCount ?? 0} icon={<ArrowDownLeft />} tone={insights?.unmatchedSettlementsCount > 0 ? 'amber' : 'green'} />
+        <Metric label="Stuck Payments" value={insights?.stuckPaymentsCount ?? 0} icon={<Activity />} tone={insights?.stuckPaymentsCount > 0 ? 'amber' : 'green'} />
       </div>
 
       <div className="prompt-chips">

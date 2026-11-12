@@ -22,21 +22,45 @@ router.get('/workspaces/:workspaceId/reimbursements', requireWorkspaceRole, asyn
 router.post('/workspaces/:workspaceId/reimbursements', requireWorkspaceRole, asyncHandler(async (req, res) => {
   const data = z.object({
     expenseId: z.string().optional(),
-    claimantName: z.string().trim().min(2).max(100),
-    amount: z.union([z.string(), z.number()]),
+    claimantName: z.string().trim().min(1).max(100).optional(),
+    amount: z.union([z.string(), z.number()]).optional(),
+    amountMinor: z.union([z.string(), z.number(), z.bigint()]).optional(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    category: z.string().optional(),
+    receiptUrl: z.string().optional(),
     notes: z.string().max(500).optional()
   }).parse(req.body);
 
   const workspace = await prisma.workspace.findUnique({ where: { id: req.params.workspaceId } });
+  if (!workspace) throw new AppError('Workspace not found', 404);
+
+  let amountMinor;
+  if (data.amountMinor !== undefined) {
+    amountMinor = BigInt(data.amountMinor);
+  } else if (data.amount !== undefined) {
+    amountMinor = parseMinorUnits(data.amount, workspace.currency);
+  } else {
+    throw new AppError('Reimbursement amount is required', 400);
+  }
+
+  const claimantName = data.claimantName || req.user.name || req.user.email || 'Member';
+  const notesText = [
+    data.title,
+    data.description,
+    data.notes,
+    data.receiptUrl ? `Proof: ${data.receiptUrl}` : null
+  ].filter(Boolean).join(' | ');
+
   const reimbursement = await prisma.reimbursement.create({
     data: {
       workspaceId: workspace.id,
       expenseId: data.expenseId,
       claimantId: req.user.id,
-      claimantName: data.claimantName,
-      amountMinor: parseMinorUnits(data.amount),
+      claimantName,
+      amountMinor,
       currency: workspace.currency,
-      notes: data.notes
+      notes: notesText || undefined
     }
   });
 
