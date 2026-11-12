@@ -434,7 +434,9 @@ router.post('/obligations/:id/payments', requireWorkspaceRoleByObligation, async
 
 // Development confirmation (strict dev mode check)
 router.post('/payments/:id/dev-confirm', asyncHandler(async (req, res) => {
-  if (env.PAYMENT_MODE !== 'development') throw new AppError('Development confirmation is disabled in non-development mode.', 403);
+  if (process.env.NODE_ENV === 'production' || env.PAYMENT_MODE !== 'development') {
+    throw new AppError('Development confirmation is strictly prohibited in production and live payment environments.', 403);
+  }
   const payment = await prisma.payment.findUnique({ where: { id: req.params.id }, include: { obligation: true } });
   if (!payment) throw new AppError('Payment not found.', 404);
   const membership = await prisma.membership.findUnique({

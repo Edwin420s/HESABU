@@ -130,6 +130,20 @@ describe('HESABU Full Enterprise Platform Integration Tests (No Mock Data)', () 
     expect(res.body.message).toContain('Already confirmed');
   });
 
+  it('6b. Strictly blocks dev-confirm when NODE_ENV is set to production', async () => {
+    const prevEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const res = await request(app)
+        .post(`/api/payments/${devPaymentId}/dev-confirm`)
+        .set('Authorization', `Bearer ${authToken}`);
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toContain('prohibited in production');
+    } finally {
+      process.env.NODE_ENV = prevEnv;
+    }
+  });
+
   it('7. Creates an obligation and settles via live on-chain Stellar Horizon verification', async () => {
     const obRes = await request(app)
       .post(`/api/workspaces/${workspaceId}/obligations`)
