@@ -41,13 +41,13 @@ jobs:
         working-directory: backend
         run: npm ci
 
-      - name: Generate Prisma Client & Push Schema
+      - name: Generate Prisma Client & Deploy Migrations
         working-directory: backend
         env:
           DATABASE_URL: "postgresql://hesabu:hesabu_ci_password@localhost:5432/hesabu_test"
         run: |
           npx prisma generate
-          npx prisma db push
+          npx prisma migrate deploy
 
       - name: Server Startup Smoke Test
         working-directory: backend

@@ -312,19 +312,19 @@ model Payment {
 }
 
 model ProviderEvent {
-  id          String    @id @default(cuid())
-  workspaceId String
+  id          String     @id @default(cuid())
+  workspaceId String?
   paymentId   String?
   provider    String
   eventType   String
-  externalId  String?   @unique
+  externalId  String?    @unique
   payload     Json
   signature   String?
-  status      String    @default("RECEIVED")
+  status      String     @default("RECEIVED")
   processedAt DateTime?
-  createdAt   DateTime  @default(now())
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  payment     Payment?  @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  createdAt   DateTime   @default(now())
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  payment     Payment?   @relation(fields: [paymentId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, provider])
 }
