@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHmac } from 'node:crypto';
 import request from 'supertest';
 import { app } from '../src/app.js';
 import { prisma } from '../src/config/prisma.js';
@@ -254,6 +254,123 @@ describe('HESABU Full Enterprise Platform Integration Tests (No Mock Data)', () 
     const updatedPayment = await prisma.payment.findUnique({ where: { id: pay.id } });
     expect(updatedPayment.status).toBe('CONFIRMED');
     expect(updatedPayment.providerRef).toBe(callbackReceipt);
+  });
+
+  it('9b. Settle South African ZAR obligation via authentic PayShap webhook with HMAC verification', async () => {
+    const obRes = await request(app)
+      .post(`/api/workspaces/${workspaceId}/obligations`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        title: 'Cape Town Office Shared Utilities',
+        memberName: 'Sipho Ndlovu',
+        amount: '450.00',
+        currency: 'ZAR'
+      });
+    expect(obRes.status).toBe(201);
+    const zarObligationId = obRes.body.obligation.id;
+
+    const intentRef = `PSHAP-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`.toUpperCase();
+    const pay = await prisma.payment.create({
+      data: {
+        workspaceId,
+        obligationId: zarObligationId,
+        rail: 'PAYSHAP_EFT',
+        amountMinor: 45000n,
+        currency: 'ZAR',
+        idempotencyKey: `idemp_za_${Date.now()}`,
+        providerRef: intentRef
+      }
+    });
+
+    const clearingTxId = `ZA-RTC-${Date.now().toString(36).toUpperCase()}`;
+    const webhookPayload = {
+      referenceNumber: intentRef,
+      providerTransactionId: clearingTxId,
+      amountMinor: 45000,
+      status: 'SETTLED',
+      payerBank: 'FIRST_NATIONAL_BANK',
+      bankRef: 'RTC-ZA-001'
+    };
+
+    const webhookSecret = process.env.ZA_PAYMENT_WEBHOOK_SECRET || 'hesabu_za_secret_dev_key';
+    const rawBody = JSON.stringify(webhookPayload);
+    const signature = createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+
+    const webhookRes = await request(app)
+      .post('/api/payments/payshap-webhook')
+      .set('x-payshap-signature', signature)
+      .set('Content-Type', 'application/json')
+      .send(rawBody);
+
+    expect(webhookRes.status).toBe(200);
+    expect(webhookRes.body.status).toBe('SUCCESS');
+    expect(webhookRes.body.transactionId).toBe(clearingTxId);
+
+    const verifiedPay = await prisma.payment.findUnique({ where: { id: pay.id } });
+    expect(verifiedPay.status).toBe('CONFIRMED');
+    expect(verifiedPay.providerRef).toBe(clearingTxId);
+
+    const zarOb = await prisma.obligation.findUnique({ where: { id: zarObligationId } });
+    expect(zarOb.status).toBe('SETTLED');
+  });
+
+  it('9c. Admin confirms PayShap/EFT settlement with audit rationale and anti-replay protection', async () => {
+    const obRes = await request(app)
+      .post(`/api/workspaces/${workspaceId}/obligations`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        title: 'Johannesburg Coworking Membership',
+        memberName: 'Thabo Mokoena',
+        amount: '850.00',
+        currency: 'ZAR'
+      });
+    expect(obRes.status).toBe(201);
+    const zarObligationId = obRes.body.obligation.id;
+
+    const payRes = await request(app)
+      .post(`/api/obligations/${zarObligationId}/payments`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({ rail: 'PAYSHAP_EFT' });
+    expect(payRes.status).toBe(201);
+    const zaPaymentId = payRes.body.payment.id;
+
+    const clearingRef = `ZA-BANK-${Date.now().toString().slice(-8)}`;
+    const confirmRes = await request(app)
+      .post(`/api/payments/${zaPaymentId}/payshap-confirm`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        clearingRef,
+        bankName: 'Standard Bank South Africa',
+        auditReason: 'Verified against Standard Bank Business Online bank statement clearance sheet'
+      });
+    expect(confirmRes.status).toBe(200);
+    expect(confirmRes.body.payment.status).toBe('CONFIRMED');
+    expect(confirmRes.body.clearingRef).toBe(clearingRef);
+
+    // Test anti-replay: Duplicate clearance reference must fail with 409
+    const secondObRes = await request(app)
+      .post(`/api/workspaces/${workspaceId}/obligations`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        title: 'Johannesburg Duplicate Test',
+        memberName: 'Thabo Mokoena',
+        amount: '850.00',
+        currency: 'ZAR'
+      });
+    const secondPayRes = await request(app)
+      .post(`/api/obligations/${secondObRes.body.obligation.id}/payments`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({ rail: 'PAYSHAP_EFT' });
+
+    const duplicateRes = await request(app)
+      .post(`/api/payments/${secondPayRes.body.payment.id}/payshap-confirm`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        clearingRef, // duplicate reference!
+        bankName: 'Standard Bank',
+        auditReason: 'Attempting duplicate replay of clearing ref'
+      });
+    expect(duplicateRes.status).toBe(409);
   });
 
   it('10. Submits an expense with multi-member splits and tests approval & payout', async () => {

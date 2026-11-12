@@ -9,6 +9,7 @@ import { parseMinorUnits, jsonSafe } from '../../shared/money.js';
 import { verifyStellarTransaction } from '../../integrations/stellar/stellarService.js';
 import { initiateMpesaSTKPush, verifyMpesaCallback } from '../../integrations/mpesa/mpesaService.js';
 import { isAuthorizedDarajaIp, validateStkCallbackPayload } from '../../integrations/mpesa/mpesaSecurity.js';
+import { SouthAfricaEftPaymentProvider } from '../../integrations/providers/paymentProvider.js';
 import { agenticFinanceEngine } from '../agent/agentService.js';
 
 const router = Router();
@@ -120,6 +121,114 @@ router.post('/payments/mpesa-callback', asyncHandler(async (req, res) => {
   });
 
   res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+}));
+
+// -------------------------------------------------------------
+// Unauthenticated Webhook: South Africa PayShap / EFT Provider
+// -------------------------------------------------------------
+router.post('/payments/payshap-webhook', asyncHandler(async (req, res) => {
+  const provider = new SouthAfricaEftPaymentProvider();
+  const rawBody = req.rawBody || JSON.stringify(req.body);
+  const signature = req.headers['x-payshap-signature'] || req.headers['x-signature'] || req.body.signature;
+  const timestamp = req.headers['x-timestamp'] || req.body.timestamp;
+
+  const verified = await provider.verifyEvent({
+    webhookPayload: req.body,
+    signature,
+    timestamp,
+    rawBody
+  });
+
+  const payment = await prisma.payment.findFirst({
+    where: {
+      OR: [
+        { providerRef: verified.referenceNumber },
+        { id: req.body.paymentId || 'NONE' }
+      ]
+    },
+    include: { obligation: true }
+  });
+
+  if (!payment) {
+    return res.status(200).json({ status: 'ACCEPTED', message: 'No matching payment intent found.' });
+  }
+
+  if (payment.status === 'CONFIRMED') {
+    return res.status(200).json({ status: 'ALREADY_CONFIRMED', paymentId: payment.id });
+  }
+
+  // Exact minor amount check
+  if (BigInt(payment.amountMinor) !== BigInt(verified.amountMinor)) {
+    throw new AppError(`PayShap settlement amount mismatch: expected ${payment.amountMinor} minor units, received ${verified.amountMinor}.`, 400);
+  }
+
+  await prisma.$transaction(async tx => {
+    const existingSettlement = await tx.settlement.findUnique({
+      where: { externalRef: verified.providerTransactionId }
+    });
+    if (existingSettlement) {
+      throw new AppError(`PayShap transaction ${verified.providerTransactionId} has already been settled.`, 409);
+    }
+
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: 'CONFIRMED',
+        providerRef: verified.providerTransactionId,
+        metadata: {
+          ...(payment.metadata || {}),
+          payshap: verified
+        }
+      }
+    });
+
+    const settlement = await tx.settlement.create({
+      data: {
+        workspaceId: payment.workspaceId,
+        obligationId: payment.obligationId,
+        paymentId: payment.id,
+        amountMinor: payment.amountMinor,
+        currency: payment.currency,
+        rail: 'PAYSHAP_EFT',
+        externalRef: verified.providerTransactionId
+      }
+    });
+
+    const journal = await tx.journalEntry.create({
+      data: {
+        workspaceId: payment.workspaceId,
+        reference: `SETTLEMENT-PAYSHAP-${settlement.id}`,
+        description: `Verified PayShap settlement (${verified.providerTransactionId}) for obligation ${payment.obligationId}`,
+        lines: {
+          create: [
+            { accountCode: '1030-PAYSHAP-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
+            { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
+          ]
+        }
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        workspaceId: payment.workspaceId,
+        actorId: null,
+        action: 'PAYMENT_CONFIRMED_PAYSHAP_WEBHOOK',
+        entityType: 'Payment',
+        entityId: payment.id,
+        details: { providerTransactionId: verified.providerTransactionId, journalEntryId: journal.id }
+      }
+    });
+
+    const total = await tx.settlement.aggregate({
+      where: { obligationId: payment.obligationId },
+      _sum: { amountMinor: true }
+    });
+    const paid = total._sum.amountMinor || 0n;
+    const status = paid >= payment.obligation.amountMinor ? 'SETTLED' : 'PARTIALLY_PAID';
+    await tx.obligation.update({ where: { id: payment.obligationId }, data: { status } });
+  });
+
+  res.status(200).json({ status: 'SUCCESS', transactionId: verified.providerTransactionId });
 }));
 
 // -------------------------------------------------------------
@@ -526,6 +635,88 @@ router.post('/payments/:id/mpesa-confirm', asyncHandler(async (req, res) => {
   });
 
   res.json({ payment: jsonSafe(result), receiptNumber: cleanReceipt, notice: 'M-Pesa receipt verified by administrator and posted to journal.' });
+}));
+
+// PayShap / South Africa EFT confirmation (Restricted to Finance Managers / Admins with audit trail)
+router.post('/payments/:id/payshap-confirm', asyncHandler(async (req, res) => {
+  const data = z.object({
+    clearingRef: z.string().trim().min(6).max(40).regex(/^[A-Z0-9_-]+$/i, 'Clearing reference must be alphanumeric.'),
+    bankName: z.string().optional(),
+    auditReason: z.string().trim().min(5, 'Audit justification rationale is required.')
+  }).parse(req.body);
+
+  const cleanRef = data.clearingRef.toUpperCase();
+
+  const payment = await prisma.payment.findUnique({ where: { id: req.params.id }, include: { obligation: true } });
+  if (!payment) throw new AppError('Payment not found.', 404);
+  const membership = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId: req.user.id, workspaceId: payment.workspaceId } }
+  });
+  if (!membership) throw new AppError('Workspace access denied.', 403);
+  if (!['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(membership.role)) {
+    throw new AppError('Only workspace Owners, Admins, or Finance Managers can confirm South African EFT/PayShap settlements.', 403);
+  }
+  if (payment.status === 'CONFIRMED') return res.json({ payment: jsonSafe(payment), message: 'Already confirmed via PayShap/EFT.' });
+
+  const result = await prisma.$transaction(async tx => {
+    const existingRef = await tx.settlement.findUnique({ where: { externalRef: cleanRef } });
+    if (existingRef) throw new AppError(`PayShap/EFT clearing reference ${cleanRef} has already been registered and settled.`, 409);
+
+    const updated = await tx.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: 'CONFIRMED',
+        providerRef: cleanRef,
+        metadata: {
+          ...(payment.metadata || {}),
+          clearingRef: cleanRef,
+          bankName: data.bankName,
+          verifiedBy: req.user.id,
+          auditReason: data.auditReason
+        }
+      }
+    });
+
+    const settlement = await tx.settlement.create({
+      data: {
+        workspaceId: payment.workspaceId,
+        obligationId: payment.obligationId,
+        paymentId: payment.id,
+        amountMinor: payment.amountMinor,
+        currency: payment.currency,
+        rail: 'PAYSHAP_EFT',
+        externalRef: cleanRef
+      }
+    });
+
+    const journal = await tx.journalEntry.create({
+      data: {
+        workspaceId: payment.workspaceId,
+        reference: `SETTLEMENT-PAYSHAP-${settlement.id}`,
+        description: `Verified PayShap/EFT settlement (${cleanRef}) for obligation ${payment.obligationId} by ${req.user.id}`,
+        lines: { create: [
+          { accountCode: '1030-PAYSHAP-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
+          { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
+        ]}
+      }
+    });
+
+    await audit(tx, payment.workspaceId, req.user.id, 'PAYMENT_CONFIRMED_PAYSHAP_MANUAL', 'Payment', payment.id, {
+      clearingRef: cleanRef,
+      bankName: data.bankName,
+      auditReason: data.auditReason,
+      journalEntryId: journal.id
+    });
+
+    const total = await tx.settlement.aggregate({ where: { obligationId: payment.obligationId }, _sum: { amountMinor: true } });
+    const paid = total._sum.amountMinor || 0n;
+    const status = paid >= payment.obligation.amountMinor ? 'SETTLED' : 'PARTIALLY_PAID';
+    await tx.obligation.update({ where: { id: payment.obligationId }, data: { status } });
+
+    return updated;
+  });
+
+  res.json({ payment: jsonSafe(result), clearingRef: cleanRef, notice: 'PayShap/EFT payment verified by administrator and posted to journal.' });
 }));
 
 // Member unverified manual payment claim submission
