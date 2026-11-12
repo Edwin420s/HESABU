@@ -14,7 +14,14 @@ const schema = z.object({
   PAYMENT_MODE: z.enum(['development', 'live']).default(defaultPaymentMode),
   STELLAR_NETWORK: z.enum(['testnet', 'public']).default('testnet'),
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
-  ZA_PAYMENT_WEBHOOK_SECRET: z.string().optional()
+  STELLAR_RECEIVER_ACCOUNT: z.string().optional(),
+  STELLAR_USDC_ISSUER: z.string().optional(),
+  ZA_PAYMENT_WEBHOOK_SECRET: z.string().optional(),
+  MPESA_ENVIRONMENT: z.enum(['sandbox', 'production']).optional(),
+  MPESA_CONSUMER_KEY: z.string().optional(),
+  MPESA_CONSUMER_SECRET: z.string().optional(),
+  MPESA_PASSKEY: z.string().optional(),
+  MPESA_SHORTCODE: z.string().optional()
 }).superRefine((data, ctx) => {
   if (data.NODE_ENV === 'production' && data.PAYMENT_MODE === 'development') {
     ctx.addIssue({

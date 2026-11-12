@@ -19,6 +19,21 @@ services:
       timeout: 5s
       retries: 5
 
+  migration:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hesabu-migration-prod
+    restart: "no"
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hesabu}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hesabu_db}?schema=public
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hesabu-internal
+
   api:
     build:
       context: ./backend
@@ -35,33 +50,49 @@ services:
       APP_URL: ${APP_URL:-https://api.hesabu.co}
       STELLAR_NETWORK: ${STELLAR_NETWORK:-public}
       STELLAR_HORIZON_URL: ${STELLAR_HORIZON_URL:-https://horizon.stellar.org}
+      STELLAR_RECEIVER_ACCOUNT: ${STELLAR_RECEIVER_ACCOUNT:-}
+      STELLAR_USDC_ISSUER: ${STELLAR_USDC_ISSUER:-}
       ZA_PAYMENT_WEBHOOK_SECRET: ${ZA_PAYMENT_WEBHOOK_SECRET:?Error: ZA_PAYMENT_WEBHOOK_SECRET is mandatory in production}
-      MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY}
-      MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET}
-      MPESA_PASSKEY: ${MPESA_PASSKEY}
-      MPESA_SHORTCODE: ${MPESA_SHORTCODE}
+      MPESA_ENVIRONMENT: ${MPESA_ENVIRONMENT:-production}
+      MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY:-}
+      MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET:-}
+      MPESA_PASSKEY: ${MPESA_PASSKEY:-}
+      MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
     depends_on:
       db:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
     networks:
       - hesabu-internal
-      - hesabu-public
-    ports:
-      - "4000:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/api/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   web:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
     container_name: hesabu-frontend-prod
     restart: always
     depends_on:
       - api
     networks:
+      - hesabu-internal
       - hesabu-public
     ports:
       - "80:80"
       - "443:443"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
 networks:
   hesabu-internal:

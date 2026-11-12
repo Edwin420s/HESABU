@@ -9,11 +9,22 @@ mkdir -p "${BACKUP_DIR}"
 
 echo "Starting HESABU PostgreSQL backup at $(date)..."
 
-# Dump database using docker container or host pg_dump
-if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -q "hesabu-postgres"; then
-    docker exec hesabu-postgres pg_dump -U hesabu hesabu_db | gzip > "${FILENAME}"
+# Detect running postgres container dynamically (supports hesabu-postgres-prod and hesabu-postgres)
+CONTAINER_NAME=""
+if command -v docker >/dev/null 2>&1; then
+    CONTAINER_NAME=$(docker ps --format '{{.Names}}' | grep "hesabu-postgres" | head -n 1 || true)
+fi
+
+if [ -n "${CONTAINER_NAME}" ]; then
+    DB_NAME="${POSTGRES_DB:-$([ "${CONTAINER_NAME}" = "hesabu-postgres-prod" ] && echo "hesabu_db" || echo "hesabu")}"
+    DB_USER="${POSTGRES_USER:-hesabu}"
+    echo "Dumping from active container: ${CONTAINER_NAME} (database: ${DB_NAME})..."
+    docker exec "${CONTAINER_NAME}" pg_dump -U "${DB_USER}" "${DB_NAME}" | gzip > "${FILENAME}"
 else
-    pg_dump -U "${POSTGRES_USER:-hesabu}" "${POSTGRES_DB:-hesabu_db}" | gzip > "${FILENAME}"
+    DB_NAME="${POSTGRES_DB:-hesabu}"
+    DB_USER="${POSTGRES_USER:-hesabu}"
+    echo "Dumping via host pg_dump (database: ${DB_NAME})..."
+    pg_dump -U "${DB_USER}" "${DB_NAME}" | gzip > "${FILENAME}"
 fi
 
 echo "Backup completed successfully: ${FILENAME}"

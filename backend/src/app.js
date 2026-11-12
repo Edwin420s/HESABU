@@ -27,12 +27,24 @@ import { notFound, errorHandler } from './middleware/errorHandler.js';
 import { prisma } from './config/prisma.js';
 
 export const app = express();
+app.set('trust proxy', true);
 app.use(helmet());
 app.use(cors({ origin: env.CORS_ORIGIN.split(',').map(v => v.trim()), credentials: false }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({
+  limit: '1mb',
+  verify: (req, _res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-app.get('/api/health', async (_req, res) => {
+// Liveness check: confirms Node.js process is responsive
+app.get('/api/health/live', (_req, res) => {
+  res.status(200).json({ status: 'ok', service: 'hesabu-api', uptime: process.uptime() });
+});
+
+// Readiness & general health check: verifies database connectivity and core services
+const handleHealthCheck = async (_req, res) => {
   const start = Date.now();
   let dbStatus = 'connected';
   try {
@@ -41,15 +53,19 @@ app.get('/api/health', async (_req, res) => {
     dbStatus = 'degraded';
   }
   const dbLatencyMs = Date.now() - start;
+  const isHealthy = dbStatus === 'connected';
 
-  res.json({
-    status: dbStatus === 'connected' ? 'ok' : 'degraded',
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? 'ok' : 'degraded',
     service: 'hesabu-api',
     mode: env.PAYMENT_MODE,
     network: env.STELLAR_NETWORK,
     database: { status: dbStatus, latencyMs: dbLatencyMs },
   });
-});
+};
+
+app.get('/api/health', handleHealthCheck);
+app.get('/api/health/ready', handleHealthCheck);
 
 app.use('/api/auth', authRoutes);
 app.use('/api', invitationsRouter);

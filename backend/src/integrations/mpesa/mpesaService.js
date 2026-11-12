@@ -15,7 +15,8 @@ export async function initiateMpesaSTKPush({
   const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
   const shortcode = process.env.MPESA_SHORTCODE;
   const passkey = process.env.MPESA_PASSKEY;
-  const environment = process.env.MPESA_ENVIRONMENT || 'sandbox';
+  const defaultEnv = process.env.NODE_ENV === 'production' ? 'production' : 'sandbox';
+  const environment = process.env.MPESA_ENVIRONMENT || defaultEnv;
 
   if (!consumerKey || !consumerSecret || !shortcode || !passkey) {
     throw new AppError(
