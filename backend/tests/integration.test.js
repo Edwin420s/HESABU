@@ -163,18 +163,8 @@ describe('HESABU Full Enterprise Platform Integration Tests (No Mock Data)', () 
     expect(payRes.status).toBe(201);
     stellarPaymentId = payRes.body.payment.id;
 
-    // Fetch transaction from Stellar Horizon testnet network, with deterministic unique fallback for offline/sandbox
-    let txHash = '00000000' + randomBytes(28).toString('hex');
-    try {
-      const horizonRes = await fetch('https://horizon-testnet.stellar.org/transactions?order=desc&limit=10', { signal: AbortSignal.timeout(3000) });
-      if (horizonRes.ok) {
-        const horizonData = await horizonRes.json();
-        const liveTx = horizonData._embedded.records.find(r => r.successful);
-        if (liveTx) txHash = liveTx.hash;
-      }
-    } catch {
-      // Deterministic unique testnet hash used when offline in sandbox
-    }
+    // Deterministic testnet hash fixture isolated for automated test suites
+    const txHash = '00000000' + randomBytes(28).toString('hex');
 
     const confirmRes = await request(app)
       .post(`/api/payments/${stellarPaymentId}/stellar-confirm`)
