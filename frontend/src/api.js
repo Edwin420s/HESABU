@@ -1,5 +1,9 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
-export function getToken() { return localStorage.getItem('hesabu_token'); }
+
+export function getToken() {
+  return localStorage.getItem('hesabu_token');
+}
+
 export async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   const token = getToken();
@@ -14,6 +18,15 @@ export async function api(path, options = {}) {
   if (!response.ok) throw new Error(data?.error?.message || 'Request failed');
   return data;
 }
+
 export function money(minor, currency = 'KES') {
-  return new Intl.NumberFormat('en-KE', { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(minor || 0) / 100);
+  const code = (currency || 'KES').toUpperCase();
+  const locale = code === 'ZAR' ? 'en-ZA' : code === 'KES' ? 'en-KE' : code === 'EUR' ? 'de-DE' : code === 'GBP' ? 'en-GB' : 'en-US';
+  const decimals = (code === 'UGX' || code === 'TZS') ? 0 : 2;
+  const divisor = Math.pow(10, decimals);
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: code,
+    maximumFractionDigits: decimals
+  }).format(Number(minor || 0) / divisor);
 }
