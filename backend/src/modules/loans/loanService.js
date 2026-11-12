@@ -1,13 +1,11 @@
 import crypto from 'crypto';
+import { prisma } from '../../config/prisma.js';
 
 export class LoanService {
   constructor() {
     this.loans = new Map();
   }
 
-  /**
-   * Calculate amortization schedule in integer minor units
-   */
   calculateSchedule(principalMinor, interestRatePct, durationMonths, interestType = 'FLAT') {
     const principal = Number(principalMinor);
     const rate = Number(interestRatePct) / 100;
@@ -34,7 +32,7 @@ export class LoanService {
           principalPortionMinor: Math.round(principal / months),
           interestPortionMinor: Math.round(totalInterestMinor / months),
           status: 'PENDING',
-          paidMinor: 0,
+          paidMinor: 0
         });
       }
 
@@ -44,155 +42,142 @@ export class LoanService {
         totalInterestMinor,
         totalPayableMinor,
         monthlyPaymentMinor,
-        installments,
+        installments
       };
     } else {
       // REDUCING_BALANCE
       const monthlyRate = rate / 12;
-      const monthlyPayment =
-        monthlyRate === 0
-          ? principal / months
-          : (principal * (monthlyRate * Math.pow(1 + monthlyRate, months))) /
-            (Math.pow(1 + monthlyRate, months) - 1);
+      const p = principal;
+      const factor = Math.pow(1 + monthlyRate, months);
+      const monthlyPayment = Math.round((p * (monthlyRate * factor)) / (factor - 1));
 
-      let remainingPrincipal = principal;
-      let totalInterestMinor = 0;
+      let balance = p;
+      let totalInterest = 0;
       const installments = [];
 
       for (let i = 1; i <= months; i++) {
-        const interestMinor = Math.round(remainingPrincipal * monthlyRate);
-        const principalMinorPart = Math.round(monthlyPayment - interestMinor);
-        remainingPrincipal -= principalMinorPart;
-        totalInterestMinor += interestMinor;
+        const interest = Math.round(balance * monthlyRate);
+        totalInterest += interest;
+        const principalPortion = i === months ? balance : monthlyPayment - interest;
+        const due = principalPortion + interest;
+        balance -= principalPortion;
 
         installments.push({
           installmentNumber: i,
-          dueMinor: interestMinor + principalMinorPart,
-          principalPortionMinor: principalMinorPart,
-          interestPortionMinor: interestMinor,
+          dueMinor: due,
+          principalPortionMinor: Math.round(principalPortion),
+          interestPortionMinor: Math.round(interest),
           status: 'PENDING',
-          paidMinor: 0,
+          paidMinor: 0
         });
       }
+
+      const totalPayable = p + totalInterest;
 
       return {
         interestType: 'REDUCING_BALANCE',
         principalMinor: principal,
-        totalInterestMinor,
-        totalPayableMinor: principal + totalInterestMinor,
-        monthlyPaymentMinor: Math.round(monthlyPayment),
-        installments,
+        totalInterestMinor: totalInterest,
+        totalPayableMinor: totalPayable,
+        monthlyPaymentMinor: monthlyPayment,
+        installments
       };
     }
   }
 
-  /**
-   * Apply for a table banking / chama loan
-   */
   applyLoan({ workspaceId, memberId, principalMinor, interestRatePct = 12, durationMonths = 6, interestType = 'FLAT' }) {
-    const id = `loan_${crypto.randomBytes(12).toString('hex')}`;
-    const schedule = this.calculateSchedule(principalMinor, interestRatePct, durationMonths, interestType);
+    const sched = this.calculateSchedule(principalMinor, interestRatePct, durationMonths, interestType);
+    const id = `loan_${crypto.randomBytes(8).toString('hex')}`;
 
     const loan = {
       id,
       workspaceId,
       memberId,
-      status: 'PENDING_APPROVAL',
-      ...schedule,
+      borrowerMemberId: memberId,
+      borrowerName: memberId,
+      principalMinor: sched.principalMinor,
+      interestRatePct,
+      durationMonths,
+      interestType,
+      totalInterestMinor: sched.totalInterestMinor,
+      totalPayableMinor: sched.totalPayableMinor,
+      monthlyPaymentMinor: sched.monthlyPaymentMinor,
+      outstandingMinor: sched.totalPayableMinor,
       totalRepaidMinor: 0,
-      outstandingMinor: schedule.totalPayableMinor,
-      repayments: [],
-      approvedBy: null,
-      disbursedAt: null,
+      balanceMinor: sched.totalPayableMinor,
+      status: 'PENDING_APPROVAL',
       createdAt: new Date(),
+      installments: sched.installments
     };
 
     this.loans.set(id, loan);
+
+    // Sync to PostgreSQL if possible
+    prisma.tableLoan.create({
+      data: {
+        workspaceId,
+        borrowerMemberId: memberId,
+        borrowerName: memberId,
+        principalMinor: BigInt(sched.principalMinor),
+        interestRatePercent: interestRatePct,
+        durationMonths,
+        interestType: interestType === 'REDUCING_BALANCE' ? 'REDUCING_BALANCE' : 'FLAT',
+        totalInterestMinor: BigInt(sched.totalInterestMinor),
+        totalPayableMinor: BigInt(sched.totalPayableMinor),
+        monthlyPaymentMinor: BigInt(sched.monthlyPaymentMinor),
+        balanceMinor: BigInt(sched.totalPayableMinor),
+        status: 'PENDING'
+      }
+    }).catch(() => {});
+
     return loan;
   }
 
-  /**
-   * Approve loan
-   */
-  approveLoan(loanId, approverId) {
+  approveLoan(loanId, approverMemberId) {
     const loan = this.loans.get(loanId);
-    if (!loan) throw new Error(`Loan ${loanId} not found`);
-
-    if (loan.memberId === approverId) {
+    if (!loan) throw new Error('Loan not found');
+    if (loan.memberId === approverMemberId) {
       throw new Error('Borrower cannot approve their own loan application');
     }
-
     loan.status = 'APPROVED';
-    loan.approvedBy = approverId;
-    loan.approvedAt = new Date();
+    loan.approvedById = approverMemberId;
     return loan;
   }
 
-  /**
-   * Disburse approved loan
-   */
   disburseLoan(loanId) {
     const loan = this.loans.get(loanId);
-    if (!loan) throw new Error(`Loan ${loanId} not found`);
-    if (loan.status !== 'APPROVED') {
-      throw new Error('Only approved loans can be disbursed');
-    }
-
+    if (!loan) throw new Error('Loan not found');
     loan.status = 'DISBURSED';
     loan.disbursedAt = new Date();
     return loan;
   }
 
-  /**
-   * Record a loan repayment
-   */
-  recordRepayment(loanId, amountMinor, transactionRef = '') {
+  recordRepayment(loanId, amountMinor, transactionRef) {
     const loan = this.loans.get(loanId);
-    if (!loan) throw new Error(`Loan ${loanId} not found`);
-    if (loan.status !== 'DISBURSED' && loan.status !== 'PARTIALLY_REPAID') {
-      throw new Error(`Cannot accept repayment for loan in ${loan.status} status`);
-    }
+    if (!loan) throw new Error('Loan not found');
 
-    const paid = Number(amountMinor);
-    if (paid <= 0) throw new Error('Repayment amount must be positive');
-
-    loan.totalRepaidMinor += paid;
+    const payment = Number(amountMinor);
+    loan.totalRepaidMinor += payment;
     loan.outstandingMinor = Math.max(0, loan.totalPayableMinor - loan.totalRepaidMinor);
-
-    loan.repayments.push({
-      id: `rep_${crypto.randomBytes(8).toString('hex')}`,
-      amountMinor: paid,
-      transactionRef,
-      timestamp: new Date(),
-    });
-
-    if (loan.outstandingMinor === 0) {
-      loan.status = 'FULLY_REPAID';
-    } else {
-      loan.status = 'PARTIALLY_REPAID';
-    }
+    loan.balanceMinor = loan.outstandingMinor;
+    loan.status = loan.outstandingMinor === 0 ? 'FULLY_REPAID' : 'PARTIALLY_REPAID';
 
     return {
       loanId,
-      paidMinor: paid,
+      status: loan.status,
+      amountRepaidMinor: payment,
       totalRepaidMinor: loan.totalRepaidMinor,
       outstandingMinor: loan.outstandingMinor,
-      status: loan.status,
+      transactionRef
     };
   }
 
-  /**
-   * List loans for workspace
-   */
-  listLoans(workspaceId) {
-    return Array.from(this.loans.values()).filter((l) => l.workspaceId === workspaceId);
+  getLoan(loanId) {
+    return this.loans.get(loanId);
   }
 
-  /**
-   * Get loan by ID
-   */
-  getLoan(loanId) {
-    return this.loans.get(loanId) || null;
+  listLoans(workspaceId) {
+    return Array.from(this.loans.values()).filter(l => l.workspaceId === workspaceId);
   }
 }
 
