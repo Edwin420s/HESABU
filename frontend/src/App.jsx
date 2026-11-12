@@ -8,6 +8,7 @@ import {
   Trash2, TrendingUp, Undo2, Users, Wallet
 } from 'lucide-react';
 import { api, money } from './api';
+import { InvoicesView, BillsView, ProcurementView, FxView } from './CommercialViews';
 
 function Auth({ onAuth }) {
   const [mode, setMode] = useState('login');
@@ -119,7 +120,11 @@ function App() {
         <div className="workspace-picker">
           <div className="workspace-icon"><Building2 size={17} /></div>
           <select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)}>
-            {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            {workspaces.map(w => (
+              <option key={w.id} value={w.id}>
+                {w.country === 'ZA' ? '🇿🇦' : '🇰🇪'} {w.name} ({w.currency || 'KES'})
+              </option>
+            ))}
           </select>
           <ChevronDown size={14} />
         </div>
@@ -127,6 +132,9 @@ function App() {
         <nav>
           <NavButton active={page === 'overview'} onClick={() => setPage('overview')} icon={<LayoutDashboard size={17} />} label="Overview" />
           <NavButton active={page === 'contributions'} onClick={() => setPage('contributions')} icon={<ArrowDownLeft size={17} />} label="Contributions" />
+          <NavButton active={page === 'invoices'} onClick={() => setPage('invoices')} icon={<FileText size={17} />} label="Invoices & AR" />
+          <NavButton active={page === 'bills'} onClick={() => setPage('bills')} icon={<Receipt size={17} />} label="Bills & AP" />
+          <NavButton active={page === 'procurement'} onClick={() => setPage('procurement')} icon={<Building2 size={17} />} label="Procurement" />
           <NavButton active={page === 'campaigns'} onClick={() => setPage('campaigns')} icon={<Target size={17} />} label="Campaigns & Goals" />
           <NavButton active={page === 'expenses'} onClick={() => setPage('expenses')} icon={<Receipt size={17} />} label="Expenses & Splits" />
           <NavButton active={page === 'reimbursements'} onClick={() => setPage('reimbursements')} icon={<PiggyBank size={17} />} label="Reimbursements" />
@@ -134,6 +142,7 @@ function App() {
           <NavButton active={page === 'rosca'} onClick={() => setPage('rosca')} icon={<Repeat size={17} />} label="Merry-Go-Round" />
           <NavButton active={page === 'loans'} onClick={() => setPage('loans')} icon={<PiggyBank size={17} />} label="Table Loans" />
           <NavButton active={page === 'budgets'} onClick={() => setPage('budgets')} icon={<Target size={17} />} label="Budget Variance" />
+          <NavButton active={page === 'fx'} onClick={() => setPage('fx')} icon={<TrendingUp size={17} />} label="FX & Treasury" />
           <NavButton active={page === 'payments'} onClick={() => setPage('payments')} icon={<CreditCard size={17} />} label="Payments & Rails" />
           <NavButton active={page === 'agent'} onClick={() => setPage('agent')} icon={<Bot size={17} />} label="Agentic Copilot" />
         </nav>
@@ -167,7 +176,7 @@ function App() {
             <b>{workspace?.name || 'Loading workspace'}</b>
           </div>
           <div className="top-actions">
-            <span className="status-dot" /> Live Multi-Rail (Stellar & M-Pesa)
+            <span className="status-dot" /> {workspace?.country === 'ZA' ? '🇿🇦 South Africa (ZAR · PayShap & Horizon)' : '🇰🇪 Kenya (KES · M-Pesa STK & Horizon)'}
             <button className="icon-button" onClick={() => setRefresh(v => v + 1)} title="Refresh Data"><RefreshCw size={15} /></button>
             <button className="icon-button"><Bell size={17} /></button>
           </div>
@@ -356,6 +365,15 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
       </>
     );
   }
+  if (page === 'invoices') {
+    return <InvoicesView workspaceId={workspaceId} currency={currency} setNotice={setNotice} refresh={refresh} />;
+  }
+  if (page === 'bills') {
+    return <BillsView workspaceId={workspaceId} currency={currency} setNotice={setNotice} refresh={refresh} />;
+  }
+  if (page === 'procurement') {
+    return <ProcurementView workspaceId={workspaceId} currency={currency} setNotice={setNotice} refresh={refresh} />;
+  }
   if (page === 'campaigns') {
     return (
       <>
@@ -420,6 +438,9 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
   }
   if (page === 'budgets') {
     return <BudgetVarianceView workspaceId={workspaceId} variance={data.variance} currency={currency} />;
+  }
+  if (page === 'fx') {
+    return <FxView workspaceId={workspaceId} currency={currency} setNotice={setNotice} />;
   }
   if (page === 'payments') {
     return (
