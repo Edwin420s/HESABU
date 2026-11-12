@@ -8,8 +8,8 @@ describe('Budget vs Actual Expense Variance Engine', () => {
     budget = new BudgetService();
   });
 
-  it('allocates and lists category budgets', () => {
-    const b1 = budget.setBudget({
+  it('allocates and lists category budgets', async () => {
+    const b1 = await budget.setBudget({
       workspaceId: 'ws_demo',
       category: 'OPERATIONS',
       allocatedMinor: 5000000, // 50,000 KES
@@ -18,15 +18,15 @@ describe('Budget vs Actual Expense Variance Engine', () => {
     expect(b1.category).toBe('OPERATIONS');
     expect(b1.allocatedMinor).toBe(5000000);
 
-    const list = budget.listBudgets('ws_demo');
+    const list = await budget.listBudgets('ws_demo');
     expect(list.length).toBe(1);
     expect(list[0].category).toBe('OPERATIONS');
   });
 
-  it('computes variance correctly with ON_TRACK, WARNING, and OVER_BUDGET statuses', () => {
-    budget.setBudget({ workspaceId: 'ws_demo', category: 'OFFICE', allocatedMinor: 1000000 }); // 10k
-    budget.setBudget({ workspaceId: 'ws_demo', category: 'TRAVEL', allocatedMinor: 1000000 }); // 10k
-    budget.setBudget({ workspaceId: 'ws_demo', category: 'MARKETING', allocatedMinor: 1000000 }); // 10k
+  it('computes variance correctly with ON_TRACK, WARNING, and OVER_BUDGET statuses', async () => {
+    await budget.setBudget({ workspaceId: 'ws_demo', category: 'OFFICE', allocatedMinor: 1000000 }); // 10k
+    await budget.setBudget({ workspaceId: 'ws_demo', category: 'TRAVEL', allocatedMinor: 1000000 }); // 10k
+    await budget.setBudget({ workspaceId: 'ws_demo', category: 'MARKETING', allocatedMinor: 1000000 }); // 10k
 
     const actualExpenses = [
       { category: 'OFFICE', amountMinor: 500000 }, // 50% => ON_TRACK
@@ -34,7 +34,7 @@ describe('Budget vs Actual Expense Variance Engine', () => {
       { category: 'MARKETING', amountMinor: 1200000 }, // 120% => OVER_BUDGET
     ];
 
-    const result = budget.computeVariance('ws_demo', actualExpenses);
+    const result = await budget.computeVariance('ws_demo', actualExpenses);
 
     expect(result.totalAllocatedMinor).toBe(3000000);
     expect(result.totalActualMinor).toBe(2550000);
