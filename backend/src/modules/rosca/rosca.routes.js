@@ -3,6 +3,7 @@ import { roscaService } from './roscaService.js';
 import { authenticate } from '../../middleware/auth.js';
 import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../shared/errors.js';
+import { jsonSafe } from '../../shared/money.js';
 
 export const roscaRouter = Router();
 
@@ -25,11 +26,11 @@ roscaRouter.get('/workspaces/:workspaceId/rosca', async (req, res, next) => {
     });
 
     if (!membership) {
-      throw new AppError('Access denied to workspace ROSCA cycles', 403, 'FORBIDDEN');
+      throw new AppError('Access denied to workspace ROSCA cycles.', 403, 'FORBIDDEN');
     }
 
-    const cycles = roscaService.listCycles(workspaceId);
-    res.json({ workspaceId, cycles });
+    const cycles = await roscaService.listCycles(workspaceId);
+    res.json({ workspaceId, cycles: jsonSafe(cycles) });
   } catch (err) {
     next(err);
   }
@@ -54,18 +55,19 @@ roscaRouter.post('/workspaces/:workspaceId/rosca', async (req, res, next) => {
     });
 
     if (!membership || (membership.role !== 'OWNER' && membership.role !== 'ADMIN')) {
-      throw new AppError('Only workspace Owners and Admins can create ROSCA cycles', 403, 'FORBIDDEN');
+      throw new AppError('Only workspace Owners and Admins can create ROSCA cycles.', 403, 'FORBIDDEN');
     }
 
-    const cycle = roscaService.createCycle({
+    const cycle = await roscaService.createCycle({
       workspaceId,
       name,
       contributionPerMemberMinor,
       frequencyDays,
       memberIds,
+      actorId: req.user.id
     });
 
-    res.status(201).json(cycle);
+    res.status(201).json(jsonSafe(cycle));
   } catch (err) {
     next(err);
   }
@@ -80,12 +82,31 @@ roscaRouter.post('/rosca/:cycleId/contribute', async (req, res, next) => {
     const { cycleId } = req.params;
     const { memberId, amountMinor } = req.body;
 
-    if (!memberId || amountMinor === undefined) {
-      throw new AppError('memberId and amountMinor are required', 400, 'INVALID_INPUT');
+    if (amountMinor === undefined) {
+      throw new AppError('amountMinor is required', 400, 'INVALID_INPUT');
     }
 
-    const result = roscaService.contribute(cycleId, memberId, Number(amountMinor));
-    res.json(result);
+    const cycle = await roscaService.getCycle(cycleId);
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_workspaceId: {
+          workspaceId: cycle.workspaceId,
+          userId: req.user.id,
+        },
+      },
+    });
+
+    if (!membership) {
+      throw new AppError('Access denied to this ROSCA cycle.', 403, 'FORBIDDEN');
+    }
+
+    // Determine target contributing member: caller's own membership unless admin/owner
+    const targetMemberId = (membership.role === 'OWNER' || membership.role === 'ADMIN') && memberId
+      ? memberId
+      : membership.id;
+
+    const result = await roscaService.contribute(cycleId, targetMemberId, amountMinor, req.user.id);
+    res.json(jsonSafe(result));
   } catch (err) {
     next(err);
   }
@@ -98,8 +119,24 @@ roscaRouter.post('/rosca/:cycleId/contribute', async (req, res, next) => {
 roscaRouter.post('/rosca/:cycleId/payout', async (req, res, next) => {
   try {
     const { cycleId } = req.params;
-    const result = roscaService.executePayoutAndRotate(cycleId);
-    res.json(result);
+    const cycle = await roscaService.getCycle(cycleId);
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_workspaceId: {
+          workspaceId: cycle.workspaceId,
+          userId: req.user.id,
+        },
+      },
+    });
+
+    if (!membership || !['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(membership.role)) {
+      throw new AppError('Only workspace Owners, Admins, or Finance Managers can authorize ROSCA pot payouts.', 403, 'FORBIDDEN');
+    }
+
+    const roundNumber = req.body.roundNumber || cycle.currentRound;
+    const result = await roscaService.disburseRound(cycleId, Number(roundNumber), req.user.id);
+    res.json(jsonSafe(result));
   } catch (err) {
     next(err);
   }
