@@ -1092,8 +1092,6 @@ router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRol
 
   const accounts = {};
   const currencyTotals = {};
-  let grandTotalDebits = 0n;
-  let grandTotalCredits = 0n;
 
   for (const entry of entries) {
     for (const line of entry.lines) {
@@ -1115,16 +1113,26 @@ router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRol
       if (line.side === 'DEBIT') {
         accounts[accountKey].debitMinor += line.amountMinor;
         currencyTotals[c].debitsMinor += line.amountMinor;
-        grandTotalDebits += line.amountMinor;
       } else {
         accounts[accountKey].creditMinor += line.amountMinor;
         currencyTotals[c].creditsMinor += line.amountMinor;
-        grandTotalCredits += line.amountMinor;
       }
     }
   }
 
   const allCurrenciesBalanced = Object.values(currencyTotals).every(ct => ct.debitsMinor === ct.creditsMinor);
+
+  // Currency breakdown with strict per-currency balancing (no mixed-currency sum)
+  const currencyBreakdown = Object.fromEntries(
+    Object.entries(currencyTotals).map(([c, totals]) => [
+      c,
+      {
+        debitsMinor: totals.debitsMinor.toString(),
+        creditsMinor: totals.creditsMinor.toString(),
+        balanced: totals.debitsMinor === totals.creditsMinor
+      }
+    ])
+  );
 
   res.json({
     trialBalance: {
@@ -1134,19 +1142,8 @@ router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRol
         creditMinor: a.creditMinor.toString(),
         currency: a.currency
       })),
-      totalDebitsMinor: grandTotalDebits.toString(),
-      totalCreditsMinor: grandTotalCredits.toString(),
-      isBalanced: grandTotalDebits === grandTotalCredits && allCurrenciesBalanced,
-      currencyBreakdown: Object.fromEntries(
-        Object.entries(currencyTotals).map(([c, totals]) => [
-          c,
-          {
-            debitsMinor: totals.debitsMinor.toString(),
-            creditsMinor: totals.creditsMinor.toString(),
-            balanced: totals.debitsMinor === totals.creditsMinor
-          }
-        ])
-      )
+      isBalanced: allCurrenciesBalanced && Object.keys(currencyTotals).length > 0,
+      currencyBreakdown
     }
   });
 }));
@@ -1154,8 +1151,10 @@ router.get('/workspaces/:workspaceId/reports/trial-balance', requireWorkspaceRol
 // Financial Statements: Income Statement (P&L) (Multi-Currency Aware)
 router.get('/workspaces/:workspaceId/reports/income-statement', requireWorkspaceRole, asyncHandler(async (req, res) => {
   const workspaceId = req.params.workspaceId;
+  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
+  const defaultCurrency = workspace?.currency || 'KES';
 
-  // Retrieve revenue from posted GAAP Revenue accounts (4000 series)
+  // Retrieve revenue from posted GAAP Revenue accounts (4000 series) grouped by currency
   const revenueJournalLines = await prisma.journalLine.findMany({
     where: {
       accountCode: { startsWith: '4' },
@@ -1163,50 +1162,80 @@ router.get('/workspaces/:workspaceId/reports/income-statement', requireWorkspace
     }
   });
 
-  let totalRevenueMinor = 0n;
+  const revenueByCurrency = {};
   for (const l of revenueJournalLines) {
+    const c = l.currency;
+    if (!revenueByCurrency[c]) revenueByCurrency[c] = 0n;
     if (l.side === 'CREDIT') {
-      totalRevenueMinor += l.amountMinor;
+      revenueByCurrency[c] += l.amountMinor;
     } else {
-      totalRevenueMinor -= l.amountMinor;
+      revenueByCurrency[c] -= l.amountMinor;
     }
   }
 
-  // If no 4000-series accounts have posted yet, derive from invoice allocations or settlements
-  if (totalRevenueMinor <= 0n) {
-    const invoiceAllocations = await prisma.invoiceAllocation.findMany({
-      where: { invoice: { workspaceId } }
-    });
-    if (invoiceAllocations.length > 0) {
-      totalRevenueMinor = invoiceAllocations.reduce((sum, a) => sum + a.amountMinor, 0n);
-    } else {
-      const settlements = await prisma.settlement.findMany({ where: { workspaceId } });
-      totalRevenueMinor = settlements.reduce((sum, s) => sum + s.amountMinor, 0n);
+  // Also include invoice earned revenue if not yet posted to 4000 journals
+  const invoiceAllocations = await prisma.invoiceAllocation.findMany({
+    where: { invoice: { workspaceId } },
+    include: { invoice: true }
+  });
+  for (const alloc of invoiceAllocations) {
+    const c = alloc.invoice?.currency || defaultCurrency;
+    if (!revenueByCurrency[c]) revenueByCurrency[c] = 0n;
+    // Only supplement if journal lines did not already capture invoice revenue
+    if (revenueJournalLines.length === 0) {
+      revenueByCurrency[c] += alloc.amountMinor;
     }
   }
 
+  // Retrieve approved/paid expenses grouped by currency
   const expenses = await prisma.expense.findMany({
     where: { workspaceId, status: { in: ['APPROVED', 'PAID'] } }
   });
 
-  const expensesByCategory = {};
-  let totalExpenseMinor = 0n;
-
+  const expensesByCurrency = {};
   for (const e of expenses) {
-    expensesByCategory[e.category] = (expensesByCategory[e.category] || 0n) + e.amountMinor;
-    totalExpenseMinor += e.amountMinor;
+    const c = defaultCurrency; // Workspace expense base currency
+    if (!expensesByCurrency[c]) {
+      expensesByCurrency[c] = { totalMinor: 0n, categories: {} };
+    }
+    expensesByCurrency[c].totalMinor += e.amountMinor;
+    expensesByCurrency[c].categories[e.category] = (expensesByCurrency[c].categories[e.category] || 0n) + e.amountMinor;
   }
 
-  const netSurplusMinor = totalRevenueMinor - totalExpenseMinor;
+  // Calculate currency breakdown
+  const allCurrencies = new Set([...Object.keys(revenueByCurrency), ...Object.keys(expensesByCurrency), defaultCurrency]);
+  const currencyBreakdown = {};
+
+  for (const c of allCurrencies) {
+    const rev = revenueByCurrency[c] || 0n;
+    const exp = expensesByCurrency[c]?.totalMinor || 0n;
+    const cats = expensesByCurrency[c]?.categories || {};
+
+    currencyBreakdown[c] = {
+      totalRevenueMinor: rev.toString(),
+      totalExpenseMinor: exp.toString(),
+      netSurplusMinor: (rev - exp).toString(),
+      expensesByCategory: Object.fromEntries(
+        Object.entries(cats).map(([k, v]) => [k, v.toString()])
+      )
+    };
+  }
+
+  const primary = currencyBreakdown[defaultCurrency] || {
+    totalRevenueMinor: '0',
+    totalExpenseMinor: '0',
+    netSurplusMinor: '0',
+    expensesByCategory: {}
+  };
 
   res.json({
     incomeStatement: {
-      totalRevenueMinor: totalRevenueMinor.toString(),
-      totalExpenseMinor: totalExpenseMinor.toString(),
-      netSurplusMinor: netSurplusMinor.toString(),
-      expensesByCategory: Object.fromEntries(
-        Object.entries(expensesByCategory).map(([k, v]) => [k, v.toString()])
-      )
+      currency: defaultCurrency,
+      totalRevenueMinor: primary.totalRevenueMinor,
+      totalExpenseMinor: primary.totalExpenseMinor,
+      netSurplusMinor: primary.netSurplusMinor,
+      expensesByCategory: primary.expensesByCategory,
+      currencyBreakdown
     }
   });
 }));
