@@ -3,6 +3,7 @@ import { budgetService } from './budgetService.js';
 import { authenticate } from '../../middleware/auth.js';
 import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../shared/errors.js';
+import { jsonSafe } from '../../shared/money.js';
 
 export const budgetRouter = Router();
 
@@ -24,10 +25,10 @@ budgetRouter.get('/workspaces/:workspaceId/budgets', async (req, res, next) => {
       },
     });
 
-    if (!membership) throw new AppError('Access denied', 403, 'FORBIDDEN');
+    if (!membership) throw new AppError('Access denied.', 403, 'FORBIDDEN');
 
-    const budgets = budgetService.listBudgets(workspaceId);
-    res.json({ workspaceId, budgets });
+    const budgets = await budgetService.listBudgets(workspaceId);
+    res.json({ workspaceId, budgets: jsonSafe(budgets) });
   } catch (err) {
     next(err);
   }
@@ -40,7 +41,7 @@ budgetRouter.get('/workspaces/:workspaceId/budgets', async (req, res, next) => {
 budgetRouter.post('/workspaces/:workspaceId/budgets', async (req, res, next) => {
   try {
     const { workspaceId } = req.params;
-    const { category, allocatedMinor, period } = req.body;
+    const { category, allocatedMinor, period, alertThresholdPercent } = req.body;
 
     const membership = await prisma.membership.findUnique({
       where: {
@@ -51,22 +52,23 @@ budgetRouter.post('/workspaces/:workspaceId/budgets', async (req, res, next) => 
       },
     });
 
-    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'ADMIN')) {
-      throw new AppError('Only Owners and Admins can configure budgets', 403, 'FORBIDDEN');
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'ADMIN' && membership.role !== 'FINANCE_MANAGER')) {
+      throw new AppError('Only Owners, Admins, or Finance Managers can configure budgets.', 403, 'FORBIDDEN');
     }
 
     if (!category || allocatedMinor === undefined) {
-      throw new AppError('category and allocatedMinor are required', 400, 'INVALID_INPUT');
+      throw new AppError('category and allocatedMinor are required.', 400, 'INVALID_INPUT');
     }
 
-    const budget = budgetService.setBudget({
+    const budget = await budgetService.setBudget({
       workspaceId,
       category,
-      allocatedMinor: Number(allocatedMinor),
+      allocatedMinor,
       period,
+      alertThresholdPercent: alertThresholdPercent || 80
     });
 
-    res.status(201).json(budget);
+    res.status(201).json(jsonSafe(budget));
   } catch (err) {
     next(err);
   }
@@ -79,7 +81,6 @@ budgetRouter.post('/workspaces/:workspaceId/budgets', async (req, res, next) => 
 budgetRouter.get('/workspaces/:workspaceId/budgets/variance', async (req, res, next) => {
   try {
     const { workspaceId } = req.params;
-
     const membership = await prisma.membership.findUnique({
       where: {
         userId_workspaceId: {
@@ -89,22 +90,10 @@ budgetRouter.get('/workspaces/:workspaceId/budgets/variance', async (req, res, n
       },
     });
 
-    if (!membership) throw new AppError('Access denied', 403, 'FORBIDDEN');
+    if (!membership) throw new AppError('Access denied.', 403, 'FORBIDDEN');
 
-    // Query settled / approved expenses
-    const expenses = await prisma.expense.findMany({
-      where: {
-        workspaceId,
-        status: { in: ['APPROVED', 'PAID'] },
-      },
-      select: {
-        category: true,
-        amountMinor: true,
-      },
-    });
-
-    const variance = budgetService.computeVariance(workspaceId, expenses);
-    res.json(variance);
+    const variance = await budgetService.computeVariance(workspaceId);
+    res.json(jsonSafe(variance));
   } catch (err) {
     next(err);
   }
