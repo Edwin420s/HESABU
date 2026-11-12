@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../../config/prisma.js';
-import { authenticate } from '../../middleware/auth.js';
+import { authenticate, requireWorkspaceRole } from '../../middleware/auth.js';
 import { AppError } from '../../shared/errors.js';
 
 export const analyticsRouter = Router();
@@ -15,7 +15,7 @@ analyticsRouter.use(authenticate);
  * - Expense burn rate vs income
  * - Overall organizational health index (0 to 100)
  */
-analyticsRouter.get('/workspaces/:workspaceId/analytics/health-score', async (req, res, next) => {
+analyticsRouter.get('/workspaces/:workspaceId/analytics/health-score', requireWorkspaceRole, async (req, res, next) => {
   try {
     const { workspaceId } = req.params;
     const workspace = await prisma.workspace.findUnique({

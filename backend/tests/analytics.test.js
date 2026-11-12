@@ -36,6 +36,22 @@ describe('Analytics & Invitation Management Tests', () => {
     expect(res.body.metrics.totalObligations).toBeDefined();
   });
 
+  it('rejects unauthenticated and unauthorized non-member access to analytics', async () => {
+    const unauthRes = await request(app)
+      .get(`/api/workspaces/${workspaceId}/analytics/health-score`);
+    expect(unauthRes.status).toBe(401);
+
+    const otherUserRes = await request(app).post('/api/auth/register').send({
+      name: 'Outside Intruder',
+      email: `intruder_${Date.now()}@hesabu.test`,
+      password: 'HesabuSecurePassword!2026',
+    });
+    const forbiddenRes = await request(app)
+      .get(`/api/workspaces/${workspaceId}/analytics/health-score`)
+      .set('Authorization', `Bearer ${otherUserRes.body.token}`);
+    expect(forbiddenRes.status).toBe(403);
+  });
+
   it('generates a signed cryptographic invitation token', async () => {
     const res = await request(app)
       .post(`/api/workspaces/${workspaceId}/invitations`)

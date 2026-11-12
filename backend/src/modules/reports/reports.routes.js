@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { statementPdfFormatter } from './statementPdfFormatter.js';
 import { generateReceiptVoucher } from './receiptGenerator.js';
-import { authenticate } from '../../middleware/auth.js';
+import { authenticate, requireWorkspaceRole } from '../../middleware/auth.js';
 import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../shared/errors.js';
 
@@ -13,7 +13,7 @@ reportsRouter.use(authenticate);
  * GET /api/workspaces/:workspaceId/reports/statement/download
  * Download printable financial statement
  */
-reportsRouter.get('/workspaces/:workspaceId/reports/statement/download', async (req, res, next) => {
+reportsRouter.get('/workspaces/:workspaceId/reports/statement/download', requireWorkspaceRole, async (req, res, next) => {
   try {
     const { workspaceId } = req.params;
     const { period = 'Current Period' } = req.query;
@@ -69,6 +69,11 @@ reportsRouter.get('/payments/:paymentId/voucher', async (req, res, next) => {
     });
 
     if (!payment) throw new AppError('Payment not found', 404, 'NOT_FOUND');
+
+    const membership = await prisma.membership.findUnique({
+      where: { userId_workspaceId: { userId: req.user.id, workspaceId: payment.workspaceId } }
+    });
+    if (!membership) throw new AppError('Access denied: workspace membership required', 403, 'FORBIDDEN');
 
     const voucher = generateReceiptVoucher({
       paymentId: payment.id,
