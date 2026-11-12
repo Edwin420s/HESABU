@@ -111,7 +111,7 @@ export class StellarPaymentProvider extends BasePaymentProvider {
   }
 
   async createPayment({ obligationId, paymentId, currency, destinationAccount }) {
-    const memo = `PAY-${(paymentId || obligationId).slice(-10).toUpperCase()}`;
+    const memo = `PAY-${(obligationId || paymentId).slice(0, 8).toUpperCase()}`;
     return {
       rail: 'STELLAR',
       memo,
@@ -208,7 +208,14 @@ export class SouthAfricaEftPaymentProvider extends BasePaymentProvider {
         throw new AppError('Payment webhook secret is not configured on the server.', 500);
       }
 
-      const dataToSign = typeof rawBody === 'string' ? rawBody : JSON.stringify(payload);
+      let dataToSign;
+      if (Buffer.isBuffer(rawBody)) {
+        dataToSign = rawBody;
+      } else if (typeof rawBody === 'string') {
+        dataToSign = Buffer.from(rawBody, 'utf-8');
+      } else {
+        dataToSign = Buffer.from(JSON.stringify(payload), 'utf-8');
+      }
       const expectedSignature = crypto.createHmac('sha256', this.webhookSecret).update(dataToSign).digest('hex');
 
       const sigBuf = Buffer.from(signatureToVerify, 'utf-8');
@@ -217,6 +224,15 @@ export class SouthAfricaEftPaymentProvider extends BasePaymentProvider {
       // Prevent RangeError exception on unequal buffer length in timingSafeEqual
       if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
         throw new AppError('Invalid South Africa payment webhook signature. Tampered payload rejected.', 403);
+      }
+    }
+
+    // Optional challenge token correlation verification
+    if (expectedPayment?.challengeToken && payload.challengeToken) {
+      const expTokenBuf = Buffer.from(expectedPayment.challengeToken, 'utf-8');
+      const provTokenBuf = Buffer.from(payload.challengeToken, 'utf-8');
+      if (expTokenBuf.length !== provTokenBuf.length || !crypto.timingSafeEqual(expTokenBuf, provTokenBuf)) {
+        throw new AppError('Invalid PayShap challenge token. Untrusted correlation key.', 403);
       }
     }
 

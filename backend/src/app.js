@@ -27,7 +27,8 @@ import { notFound, errorHandler } from './middleware/errorHandler.js';
 import { prisma } from './config/prisma.js';
 
 export const app = express();
-app.set('trust proxy', true);
+// Trust single reverse proxy hop (Nginx) to prevent client-spoofed X-Forwarded-For headers
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: env.CORS_ORIGIN.split(',').map(v => v.trim()), credentials: false }));
 app.use(express.json({

@@ -7,7 +7,7 @@ import {
   Plus, Receipt, RefreshCw, Repeat, Send, ShieldCheck, Sparkles, Target,
   Trash2, TrendingUp, Undo2, Users, Wallet
 } from 'lucide-react';
-import { api, money } from './api';
+import { api, money, API_URL } from './api';
 import {
   InvoicesView,
   BillsView,
@@ -1068,6 +1068,7 @@ function PaymentInitModal({ obligation, currency, onClose, onSubmit }) {
             <select value={rail} onChange={e => setRail(e.target.value)}>
               <option value="STELLAR">Stellar Network (USDC Live Horizon Verification)</option>
               <option value="MPESA">Safaricom M-Pesa (Daraja STK Push & Webhook)</option>
+              <option value="PAYSHAP_EFT">South Africa PayShap & Rapid EFT (ZAR Clearing)</option>
               <option value="DEVELOPMENT">Development Simulation (Sandbox)</option>
             </select>
           </Field>
@@ -1076,9 +1077,14 @@ function PaymentInitModal({ obligation, currency, onClose, onSubmit }) {
               <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="e.g. 254712345678" />
             </Field>
           )}
+          {rail === 'PAYSHAP_EFT' && (
+            <Field label="PayShap Account / Alias Number">
+              <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="e.g. 0821234567 or Bank Account" />
+            </Field>
+          )}
           {rail === 'STELLAR' && (
             <p className="tiny" style={{ background: '#edf4ef', padding: '10px', borderRadius: '6px' }}>
-              Memo Reference: <b>HESABU-{obligation.id.slice(0, 8)}</b>. You will authorize the transaction using a Stellar wallet or Horizon transaction.
+              Memo Reference: <b>PAY-{obligation.id.slice(0, 8).toUpperCase()}</b>. You will authorize the transaction using a Stellar wallet or Horizon transaction.
             </p>
           )}
           <div className="modal-actions">
@@ -1182,6 +1188,11 @@ function PaymentTable({ rows, currency, refresh, setNotice }) {
         if (!receiptNumber) return;
         await api(`/payments/${p.id}/mpesa-confirm`, { method: 'POST', body: JSON.stringify({ receiptNumber: receiptNumber.trim().toUpperCase() }) });
         setNotice('M-Pesa payment confirmed and posted to journal.');
+      } else if (p.rail === 'PAYSHAP_EFT') {
+        const clearingRef = prompt('Enter South Africa Bank / PayShap Clearing Reference:');
+        if (!clearingRef) return;
+        await api(`/payments/${p.id}/payshap-confirm`, { method: 'POST', body: JSON.stringify({ clearingRef: clearingRef.trim().toUpperCase() }) });
+        setNotice('PayShap payment confirmed and posted to journal.');
       }
       refresh();
     } catch (e) {
@@ -1223,7 +1234,7 @@ function PaymentTable({ rows, currency, refresh, setNotice }) {
                 <td>
                   {r.status === 'PENDING' ? (
                     <button className="small-button" onClick={() => handleVerify(r)}>
-                      {r.rail === 'STELLAR' ? 'Verify on Stellar' : r.rail === 'MPESA' ? 'Confirm M-Pesa' : 'Simulate verify'}
+                      {r.rail === 'STELLAR' ? 'Verify on Stellar' : r.rail === 'MPESA' ? 'Confirm M-Pesa' : r.rail === 'PAYSHAP_EFT' ? 'Confirm PayShap' : 'Simulate verify'}
                     </button>
                   ) : (
                     <button className="small-button" onClick={() => setSelectedReceipt(r)}>
@@ -1672,7 +1683,7 @@ function Members({ workspace, refresh, setNotice }) {
 function Reports({ workspaceId }) {
   async function download() {
     const token = localStorage.getItem('hesabu_token');
-    const r = await fetch(`http://localhost:4000/api/workspaces/${workspaceId}/reports/ledger.csv`, {
+    const r = await fetch(`${API_URL}/workspaces/${workspaceId}/reports/ledger.csv`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (!r.ok) {
