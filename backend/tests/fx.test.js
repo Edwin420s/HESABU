@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import request from 'supertest';
 import { app } from '../src/app.js';
+import { prisma } from '../src/config/prisma.js';
 import { FxService } from '../src/modules/fx/fxService.js';
 
 describe('Multi-Currency FX Service & Engine', () => {
@@ -84,5 +85,81 @@ describe('Multi-Currency FX Service & Engine', () => {
     expect(res.status).toBe(200);
     // 2600 KES / 130 = 20 USD = 2000 USD cents
     expect(res.body.targetAmountMinor).toBe(2000);
+  });
+
+  it('creates persistent quote and executes with balanced multi-currency GAAP journal entry', async () => {
+    const regRes = await request(app)
+      .post('/api/auth/register')
+      .send({
+        name: 'FX Trader',
+        email: `fxtrader_${Date.now()}@hesabu.test`,
+        password: 'Password123!'
+      });
+    const token = regRes.body.token;
+
+    const wsRes = await request(app)
+      .post('/api/workspaces')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Regional Treasury Hub',
+        type: 'ORGANISATION',
+        currency: 'KES'
+      });
+    const workspaceId = wsRes.body.workspace.id;
+
+    // Create persistent quote (100 USD = 10,000 cents to KES)
+    const quoteRes = await request(app)
+      .post(`/api/workspaces/${workspaceId}/fx/quote`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        fromCurrency: 'USD',
+        toCurrency: 'KES',
+        amountMinor: 10000,
+        spreadPercentage: 0.005,
+        validityMinutes: 30
+      });
+
+    expect(quoteRes.status).toBe(201);
+    const quote = quoteRes.body;
+    expect(quote.quoteRef).toMatch(/^FXQ-USD-KES-/);
+    expect(quote.status).toBe('ACTIVE');
+
+    // Execute quote
+    const execRes = await request(app)
+      .post(`/api/fx/quotes/${quote.quoteRef}/execute`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        settlementRef: `SETTLE-${Date.now().toString(36).toUpperCase()}`
+      });
+
+    expect(execRes.status).toBe(200);
+    expect(execRes.body.quoteId).toBe(quote.id);
+
+    // Verify journal entry lines balance for each currency leg via 1040-FX-CLEARING
+    const journalEntries = await prisma.journalEntry.findMany({
+      where: { workspaceId },
+      include: { lines: true }
+    });
+    expect(journalEntries.length).toBeGreaterThan(0);
+
+    const fxEntry = journalEntries.find(j => j.reference.startsWith('JOURNAL-FX-'));
+    expect(fxEntry).toBeDefined();
+    expect(fxEntry.lines.length).toBe(4);
+
+    // Filter USD lines
+    const usdLines = fxEntry.lines.filter(l => l.currency === 'USD');
+    const usdDebit = usdLines.filter(l => l.side === 'DEBIT').reduce((acc, l) => acc + l.amountMinor, 0n);
+    const usdCredit = usdLines.filter(l => l.side === 'CREDIT').reduce((acc, l) => acc + l.amountMinor, 0n);
+    expect(usdDebit).toBe(usdCredit); // USD leg balances!
+
+    // Filter KES lines
+    const kesLines = fxEntry.lines.filter(l => l.currency === 'KES');
+    const kesDebit = kesLines.filter(l => l.side === 'DEBIT').reduce((acc, l) => acc + l.amountMinor, 0n);
+    const kesCredit = kesLines.filter(l => l.side === 'CREDIT').reduce((acc, l) => acc + l.amountMinor, 0n);
+    expect(kesDebit).toBe(kesCredit); // KES leg balances!
+
+    // Verify 1040-FX-CLEARING is used
+    const clearingLines = fxEntry.lines.filter(l => l.accountCode === '1040-FX-CLEARING');
+    expect(clearingLines.length).toBe(2);
   });
 });

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { fxService } from './fxService.js';
-import { authenticate } from '../../middleware/auth.js';
+import { authenticate, requireWorkspaceRole, allowRoles } from '../../middleware/auth.js';
 import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../shared/errors.js';
 import { jsonSafe } from '../../shared/money.js';
@@ -53,21 +53,10 @@ fxRouter.post('/fx/convert', (req, res, next) => {
  * POST /api/workspaces/:workspaceId/fx/quote
  * Create an immutable, persistent FX conversion quote in PostgreSQL
  */
-fxRouter.post('/workspaces/:workspaceId/fx/quote', authenticate, async (req, res, next) => {
+fxRouter.post('/workspaces/:workspaceId/fx/quote', authenticate, requireWorkspaceRole, allowRoles('OWNER', 'ADMIN', 'FINANCE_MANAGER'), async (req, res, next) => {
   try {
     const { workspaceId } = req.params;
     const { amountMinor, fromCurrency, toCurrency, spreadPercentage = 0.005, validityMinutes = 15 } = req.body;
-
-    const membership = await prisma.membership.findUnique({
-      where: {
-        userId_workspaceId: {
-          workspaceId,
-          userId: req.user.id,
-        },
-      },
-    });
-
-    if (!membership) throw new AppError('Access denied.', 403, 'FORBIDDEN');
 
     if (amountMinor === undefined || !fromCurrency || !toCurrency) {
       throw new AppError('amountMinor, fromCurrency, and toCurrency are required.', 400, 'INVALID_INPUT');
@@ -92,7 +81,7 @@ fxRouter.post('/workspaces/:workspaceId/fx/quote', authenticate, async (req, res
  * GET /api/workspaces/:workspaceId/fx/quotes
  * List workspace FX quotes
  */
-fxRouter.get('/workspaces/:workspaceId/fx/quotes', authenticate, async (req, res, next) => {
+fxRouter.get('/workspaces/:workspaceId/fx/quotes', authenticate, requireWorkspaceRole, async (req, res, next) => {
   try {
     const { workspaceId } = req.params;
     const quotes = await prisma.fXQuote.findMany({
@@ -114,6 +103,16 @@ fxRouter.post('/fx/quotes/:quoteRef/execute', authenticate, async (req, res, nex
   try {
     const { quoteRef } = req.params;
     const { settlementRef } = req.body;
+
+    const quote = await prisma.fXQuote.findUnique({ where: { quoteRef } });
+    if (!quote) throw new AppError('FX quote not found.', 404);
+
+    const membership = await prisma.membership.findUnique({
+      where: { userId_workspaceId: { userId: req.user.id, workspaceId: quote.workspaceId } }
+    });
+    if (!membership || !['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(membership.role)) {
+      throw new AppError('Only workspace Owners, Admins, or Finance Managers can execute FX conversions.', 403);
+    }
 
     const conversion = await fxService.executeConversion({
       quoteRef,

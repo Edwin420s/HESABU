@@ -229,16 +229,21 @@ export class FxService {
         }
       });
 
-      // Post multi-currency balanced journal entry
+      // Post GAAP multi-currency balanced journal entry:
+      // Using 1040-FX-CLEARING to ensure that debits equal credits for each distinct currency leg
       const journal = await tx.journalEntry.create({
         data: {
           workspaceId: quote.workspaceId,
-          reference: `JOURNAL-FX-${conv.id.slice(0, 8)}`,
-          description: `FX Cross-border conversion: ${quote.fromCurrency} ${quote.sourceAmountMinor.toString()} to ${quote.toCurrency} ${quote.targetAmountMinor.toString()} @ ${quote.rate.toString()}`,
+          reference: `JOURNAL-FX-${conv.id.slice(0, 8)}-${Date.now()}`,
+          description: `FX Cross-border conversion: ${quote.fromCurrency} ${quote.sourceAmountMinor.toString()} to ${quote.toCurrency} ${quote.targetAmountMinor.toString()} @ rate ${quote.rate.toString()}`,
           lines: {
             create: [
+              // Source currency leg: Debit 1040-FX-CLEARING, Credit 1000-CASH-CLEARING
+              { accountCode: '1040-FX-CLEARING', side: 'DEBIT', amountMinor: quote.sourceAmountMinor, currency: quote.fromCurrency },
+              { accountCode: '1000-CASH-CLEARING', side: 'CREDIT', amountMinor: quote.sourceAmountMinor, currency: quote.fromCurrency },
+              // Target currency leg: Debit 1000-CASH-CLEARING, Credit 1040-FX-CLEARING
               { accountCode: '1000-CASH-CLEARING', side: 'DEBIT', amountMinor: quote.targetAmountMinor, currency: quote.toCurrency },
-              { accountCode: '1000-CASH-CLEARING', side: 'CREDIT', amountMinor: quote.sourceAmountMinor, currency: quote.fromCurrency }
+              { accountCode: '1040-FX-CLEARING', side: 'CREDIT', amountMinor: quote.targetAmountMinor, currency: quote.toCurrency }
             ]
           }
         }
