@@ -27,24 +27,66 @@ router.post('/payments/mpesa-callback', asyncHandler(async (req, res) => {
     throw new AppError(`Invalid M-Pesa callback envelope: ${payloadValidation.error}`, 400);
   }
 
-  const verified = verifyMpesaCallback({ callbackBody: req.body });
+  const stk = payloadValidation.data;
   const payment = await prisma.payment.findFirst({
     where: {
       OR: [
-        { checkoutRequestId: verified.checkoutRequestId },
-        { providerRef: verified.checkoutRequestId }
+        { checkoutRequestId: stk.CheckoutRequestID },
+        { providerRef: stk.CheckoutRequestID }
       ]
     },
     include: { obligation: true }
   });
 
   if (!payment) {
+    // Durably store orphan callback event for forensic audit trail
+    await prisma.auditLog.create({
+      data: {
+        workspaceId: 'SYSTEM',
+        actorId: null,
+        action: 'ORPHAN_MPESA_CALLBACK',
+        entityType: 'MpesaCallback',
+        entityId: stk.CheckoutRequestID,
+        details: req.body
+      }
+    }).catch(() => {});
     return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+  }
+
+  // Durably record failed payment attempts
+  if (stk.ResultCode !== 0) {
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: 'FAILED',
+        metadata: {
+          ...(payment.metadata || {}),
+          resultCode: stk.ResultCode,
+          resultDesc: stk.ResultDesc,
+          failedAt: new Date().toISOString()
+        }
+      }
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        workspaceId: payment.workspaceId,
+        actorId: null,
+        action: 'PAYMENT_FAILED_MPESA',
+        entityType: 'Payment',
+        entityId: payment.id,
+        details: { checkoutRequestId: stk.CheckoutRequestID, resultCode: stk.ResultCode, resultDesc: stk.ResultDesc }
+      }
+    });
+
+    return res.status(200).json({ ResultCode: 0, ResultDesc: 'Failure recorded' });
   }
 
   if (payment.status === 'CONFIRMED') {
     return res.status(200).json({ ResultCode: 0, ResultDesc: 'Already confirmed' });
   }
+
+  const verified = verifyMpesaCallback({ callbackBody: req.body, expectedCheckoutRequestId: stk.CheckoutRequestID });
 
   // Validate amount matches expected payment attempt
   const expectedWhole = Math.round(Number(payment.amountMinor) / 100);
@@ -150,6 +192,17 @@ router.post('/payments/payshap-webhook', asyncHandler(async (req, res) => {
   });
 
   if (!payment) {
+    // Durably store orphan event for forensic investigation
+    await prisma.auditLog.create({
+      data: {
+        workspaceId: 'SYSTEM',
+        actorId: null,
+        action: 'ORPHAN_PAYSHAP_WEBHOOK',
+        entityType: 'PayShapCallback',
+        entityId: verified.providerTransactionId,
+        details: verified.rawPayload
+      }
+    }).catch(() => {});
     return res.status(200).json({ status: 'ACCEPTED', message: 'No matching payment intent found.' });
   }
 
@@ -167,7 +220,7 @@ router.post('/payments/payshap-webhook', asyncHandler(async (req, res) => {
       where: { externalRef: verified.providerTransactionId }
     });
     if (existingSettlement) {
-      throw new AppError(`PayShap transaction ${verified.providerTransactionId} has already been settled.`, 409);
+      return res.status(200).json({ status: 'ALREADY_SETTLED', providerTransactionId: verified.providerTransactionId });
     }
 
     await tx.payment.update({
@@ -284,10 +337,12 @@ router.post('/workspaces/:workspaceId/obligations', requireWorkspaceRole, allowR
     memberName: z.string().trim().min(2).max(100),
     memberEmail: z.string().email().optional(),
     amount: z.union([z.string(), z.number()]),
+    currency: z.string().length(3).optional(),
     dueAt: z.string().datetime().optional()
   }).parse(req.body);
 
   const workspace = await prisma.workspace.findUnique({ where: { id: req.params.workspaceId } });
+  const currency = data.currency ? data.currency.toUpperCase() : workspace.currency;
   const obligation = await prisma.obligation.create({
     data: {
       workspaceId: workspace.id,
@@ -296,8 +351,8 @@ router.post('/workspaces/:workspaceId/obligations', requireWorkspaceRole, allowR
       description: data.description,
       memberName: data.memberName,
       memberEmail: data.memberEmail,
-      amountMinor: parseMinorUnits(data.amount),
-      currency: workspace.currency,
+      amountMinor: parseMinorUnits(data.amount, currency),
+      currency,
       dueAt: data.dueAt ? new Date(data.dueAt) : null
     }
   });
@@ -359,14 +414,27 @@ router.post('/obligations/:id/payments', requireWorkspaceRoleByObligation, async
   let providerRef = null;
 
   if (data.rail === 'STELLAR') {
+    const dest = env.STELLAR_RECEIVER_ACCOUNT || 'GDHESABUTREASURY1234567890ABCDEFGHIJKLMNOPQRSTUV';
+    providerRef = `STELLAR-${randomUUID().slice(0, 8).toUpperCase()}`;
     metadata = {
-      memo: `HESABU-${obligation.id.slice(0, 8)}`,
-      network: env.STELLAR_NETWORK
+      memo: `PAY-${obligation.id.slice(0, 8).toUpperCase()}`,
+      network: env.STELLAR_NETWORK,
+      destinationAccount: dest,
+      assetCode: obligation.currency === 'KES' ? 'KES' : 'USDC',
+      assetIssuer: env.STELLAR_NETWORK === 'public' ? 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN' : undefined
     };
   } else if (data.rail === 'PAYSHAP_EFT') {
-    providerRef = `ZA-EFT-${obligation.id.slice(0, 8)}-${Date.now().toString(36).toUpperCase()}`;
+    const zaProvider = new SouthAfricaEftPaymentProvider();
+    const intent = await zaProvider.createPayment({
+      amountMinor: outstanding,
+      currency: obligation.currency,
+      recipientReference: `ZA-${obligation.id.slice(0, 8)}`
+    });
+    providerRef = intent.providerRef;
     metadata = {
-      paymentReference: providerRef,
+      paymentReference: intent.paymentReference,
+      challengeToken: intent.challengeToken,
+      redirectUrl: intent.redirectUrl,
       country: 'ZA'
     };
   }
@@ -504,10 +572,14 @@ router.post('/payments/:id/stellar-confirm', asyncHandler(async (req, res) => {
 
   const verification = await verifyStellarTransaction({
     txHash: data.txHash,
+    expectedDestination: payment.metadata?.destinationAccount,
     expectedMemo: payment.metadata?.memo,
     expectedAmountMinor: payment.amountMinor,
-    expectedAssetCode: payment.currency === 'KES' ? 'KES' : 'USDC'
+    expectedAssetCode: payment.currency === 'KES' ? 'KES' : 'USDC',
+    expectedAssetIssuer: payment.metadata?.assetIssuer
   });
+
+  const verifiedAmountMinor = BigInt(verification.operation?.amountMinor || payment.amountMinor);
 
   const result = await prisma.$transaction(async tx => {
     const existingTx = await tx.payment.findFirst({
@@ -530,7 +602,7 @@ router.post('/payments/:id/stellar-confirm', asyncHandler(async (req, res) => {
         workspaceId: payment.workspaceId,
         obligationId: payment.obligationId,
         paymentId: payment.id,
-        amountMinor: payment.amountMinor,
+        amountMinor: verifiedAmountMinor,
         currency: payment.currency,
         rail: 'STELLAR',
         externalRef: data.txHash
@@ -766,77 +838,6 @@ router.post('/payments/:id/claim-manual', asyncHandler(async (req, res) => {
   });
 
   res.json({ payment: jsonSafe(updated), notice: 'Offline payment claim submitted for treasurer verification.' });
-}));
-
-// South Africa PayShap / EFT payment settlement
-router.post('/payments/:id/payshap-confirm', asyncHandler(async (req, res) => {
-  const data = z.object({
-    bankReference: z.string().trim().min(6).max(40)
-  }).parse(req.body);
-
-  const payment = await prisma.payment.findUnique({ where: { id: req.params.id }, include: { obligation: true, workspace: true } });
-  if (!payment) throw new AppError('Payment not found.', 404);
-  const membership = await prisma.membership.findUnique({
-    where: { userId_workspaceId: { userId: req.user.id, workspaceId: payment.workspaceId } }
-  });
-  if (!membership || !['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(membership.role)) {
-    throw new AppError('Only finance managers can confirm South African EFT settlements.', 403);
-  }
-  if (payment.status === 'CONFIRMED') return res.json({ payment: jsonSafe(payment), message: 'Already confirmed.' });
-
-  const cleanRef = data.bankReference.toUpperCase();
-
-  const result = await prisma.$transaction(async tx => {
-    const existingRef = await tx.settlement.findUnique({ where: { externalRef: cleanRef } });
-    if (existingRef) throw new AppError(`Bank reference ${cleanRef} has already settled a payment.`, 409);
-
-    const updated = await tx.payment.update({
-      where: { id: payment.id },
-      data: {
-        status: 'CONFIRMED',
-        providerRef: cleanRef,
-        metadata: { ...(payment.metadata || {}), bankReference: cleanRef }
-      }
-    });
-
-    const settlement = await tx.settlement.create({
-      data: {
-        workspaceId: payment.workspaceId,
-        obligationId: payment.obligationId,
-        paymentId: payment.id,
-        amountMinor: payment.amountMinor,
-        currency: payment.currency,
-        rail: 'PAYSHAP_EFT',
-        externalRef: cleanRef
-      }
-    });
-
-    const journal = await tx.journalEntry.create({
-      data: {
-        workspaceId: payment.workspaceId,
-        reference: `SETTLEMENT-EFT-${settlement.id}`,
-        description: `Verified South Africa PayShap/EFT settlement (${cleanRef}) for obligation ${payment.obligationId}`,
-        lines: { create: [
-          { accountCode: '1030-BANK-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
-          { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
-        ]}
-      }
-    });
-
-    await audit(tx, payment.workspaceId, req.user.id, 'PAYMENT_CONFIRMED_EFT', 'Payment', payment.id, {
-      bankReference: cleanRef,
-      journalEntryId: journal.id
-    });
-
-    const total = await tx.settlement.aggregate({ where: { obligationId: payment.obligationId }, _sum: { amountMinor: true } });
-    const paid = total._sum.amountMinor || 0n;
-    const status = paid >= payment.obligation.amountMinor ? 'SETTLED' : 'PARTIALLY_PAID';
-    await tx.obligation.update({ where: { id: payment.obligationId }, data: { status } });
-
-    return updated;
-  });
-
-  res.json({ payment: jsonSafe(result), notice: 'South Africa PayShap/EFT settlement verified and posted to journal.' });
 }));
 
 router.get('/workspaces/:workspaceId/payments', requireWorkspaceRole, asyncHandler(async (req, res) => {

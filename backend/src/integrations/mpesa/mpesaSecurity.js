@@ -3,23 +3,27 @@
  * Validates inbound webhook network sources, payload structures, and timestamps to prevent spoofing.
  */
 
-// Safaricom Daraja production and sandbox IP ranges
-const KNOWN_DARAJA_IPS = [
+// Safaricom Daraja production public IP ranges (authoritative Safaricom gateway CIDRs)
+const DARAJA_PROD_IPS = [
   '196.201.214.200',
   '196.201.214.206',
   '196.201.213.114',
   '196.201.214.207',
   '196.201.214.208',
-  '127.0.0.1',
-  '::1',
+  '196.201.214.209',
+  '196.201.214.210'
 ];
 
 export function isAuthorizedDarajaIp(remoteIp) {
   if (process.env.NODE_ENV !== 'production') {
     return true; // Allow local tests and developer sandboxes
   }
-  const cleanIp = (remoteIp || '').replace('::ffff:', '');
-  return KNOWN_DARAJA_IPS.includes(cleanIp);
+  const cleanIp = (remoteIp || '').replace('::ffff:', '').trim();
+  // Strictly disallow loopback/internal addresses in production
+  if (cleanIp === '127.0.0.1' || cleanIp === '::1' || cleanIp === 'localhost') {
+    return false;
+  }
+  return DARAJA_PROD_IPS.includes(cleanIp);
 }
 
 export function validateStkCallbackPayload(body) {

@@ -61,7 +61,14 @@ export async function initiateMpesaSTKPush({
   ].join('');
 
   const password = Buffer.from(`${shortcode}${passkey}${timestamp}`).toString('base64');
-  const amountWhole = Math.max(1, Math.round(Number(amountMinor) / 100));
+  const minor = BigInt(amountMinor);
+  if (minor % 100n !== 0n) {
+    throw new AppError('M-Pesa STK push requires whole Kenya Shillings without fractional cents.', 400);
+  }
+  const amountWhole = Number(minor / 100n);
+  if (amountWhole <= 0) {
+    throw new AppError('M-Pesa STK push amount must be at least 1 KES.', 400);
+  }
 
   // 3. Send STK Push request to Safaricom
   const pushRes = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
@@ -126,9 +133,13 @@ export function verifyMpesaCallback({ callbackBody, expectedCheckoutRequestId })
     throw new AppError('Safaricom callback missing required MpesaReceiptNumber.', 400);
   }
 
+  if (!amountItem || amountItem.Value === null || amountItem.Value === undefined || Number(amountItem.Value) <= 0) {
+    throw new AppError('Safaricom callback missing or invalid non-null Amount.', 400);
+  }
+
   return {
     receiptNumber: String(receiptItem.Value).trim().toUpperCase(),
-    amountPaid: amountItem ? Number(amountItem.Value) : null,
+    amountPaid: Number(amountItem.Value),
     phoneNumber: phoneItem ? String(phoneItem.Value) : null,
     checkoutRequestId: stk.CheckoutRequestID,
     merchantRequestId: stk.MerchantRequestID,

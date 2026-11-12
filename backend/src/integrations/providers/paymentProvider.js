@@ -110,8 +110,8 @@ export class StellarPaymentProvider extends BasePaymentProvider {
     super('STELLAR');
   }
 
-  async createPayment({ obligationId, currency, destinationAccount }) {
-    const memo = `HESABU-${obligationId.slice(0, 8)}`;
+  async createPayment({ obligationId, paymentId, currency, destinationAccount }) {
+    const memo = `PAY-${(paymentId || obligationId).slice(-10).toUpperCase()}`;
     return {
       rail: 'STELLAR',
       memo,
@@ -153,7 +153,10 @@ export class StellarPaymentProvider extends BasePaymentProvider {
 export class SouthAfricaEftPaymentProvider extends BasePaymentProvider {
   constructor() {
     super('PAYSHAP_EFT');
-    this.webhookSecret = process.env.ZA_PAYMENT_WEBHOOK_SECRET || 'hesabu_za_secret_dev_key';
+    if (process.env.NODE_ENV === 'production' && !process.env.ZA_PAYMENT_WEBHOOK_SECRET) {
+      throw new AppError('ZA_PAYMENT_WEBHOOK_SECRET is required in production environment.', 500);
+    }
+    this.webhookSecret = process.env.ZA_PAYMENT_WEBHOOK_SECRET || (process.env.NODE_ENV === 'production' ? '' : 'hesabu_za_secret_dev_key');
   }
 
   /**
@@ -172,6 +175,8 @@ export class SouthAfricaEftPaymentProvider extends BasePaymentProvider {
       .update(`${intentId}:${amountMinor}:${cleanRef}`)
       .digest('hex');
 
+    const gatewayBase = process.env.ZA_PAYMENT_GATEWAY_URL || (process.env.NODE_ENV === 'production' ? 'https://api.payshap.co.za' : 'https://checkout.payshap.za');
+
     return {
       rail: 'PAYSHAP_EFT',
       providerRef: intentId,
@@ -179,7 +184,7 @@ export class SouthAfricaEftPaymentProvider extends BasePaymentProvider {
       aliasNumber: aliasNumber || null,
       challengeToken,
       status: 'PENDING',
-      redirectUrl: `https://checkout.payshap.za/pay?intent=${intentId}&ref=${cleanRef}`
+      redirectUrl: `${gatewayBase}/pay?intent=${intentId}&ref=${cleanRef}`
     };
   }
 
@@ -194,20 +199,39 @@ export class SouthAfricaEftPaymentProvider extends BasePaymentProvider {
     const payload = typeof webhookPayload === 'object' ? webhookPayload : JSON.parse(rawBody || '{}');
     const signatureToVerify = signature || payload.signature;
 
-    // In production, HMAC-SHA256 signature is mandatory
+    // In production, HMAC-SHA256 signature is strictly mandatory
     if (process.env.NODE_ENV === 'production' || process.env.ENFORCE_ZA_WEBHOOK_SIGNATURE === 'true') {
       if (!signatureToVerify) {
         throw new AppError('Missing required HMAC-SHA256 signature from South African payment gateway.', 401);
       }
+      if (!this.webhookSecret) {
+        throw new AppError('Payment webhook secret is not configured on the server.', 500);
+      }
+
       const dataToSign = typeof rawBody === 'string' ? rawBody : JSON.stringify(payload);
       const expectedSignature = crypto.createHmac('sha256', this.webhookSecret).update(dataToSign).digest('hex');
 
-      if (!crypto.timingSafeEqual(Buffer.from(signatureToVerify), Buffer.from(expectedSignature))) {
+      const sigBuf = Buffer.from(signatureToVerify, 'utf-8');
+      const expBuf = Buffer.from(expectedSignature, 'utf-8');
+
+      // Prevent RangeError exception on unequal buffer length in timingSafeEqual
+      if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
         throw new AppError('Invalid South Africa payment webhook signature. Tampered payload rejected.', 403);
       }
     }
 
-    // Verify event status is terminal and successful (SETTLED or COMPLETED)
+    // Webhook timestamp freshness check to prevent replay attacks
+    const eventTime = timestamp || payload.timestamp || payload.createdAt;
+    if (eventTime) {
+      const eventTimestamp = new Date(eventTime).getTime();
+      const now = Date.now();
+      const maxAgeMs = 5 * 60 * 1000; // 5 minutes freshness window
+      if (isNaN(eventTimestamp) || eventTimestamp > now + 60000 || (now - eventTimestamp) > maxAgeMs) {
+        throw new AppError('Webhook signature timestamp expired or outside acceptable freshness window.', 401);
+      }
+    }
+
+    // Verify event status is terminal and successful (SETTLED, COMPLETED, or SUCCESS)
     const eventStatus = (payload.status || payload.eventStatus || 'PENDING').toUpperCase();
     if (eventStatus !== 'SETTLED' && eventStatus !== 'COMPLETED' && eventStatus !== 'SUCCESS') {
       throw new AppError(`PayShap payment cannot be settled: provider status is "${eventStatus}".`, 400);
@@ -222,13 +246,19 @@ export class SouthAfricaEftPaymentProvider extends BasePaymentProvider {
       );
     }
 
-    const providerTransactionId = payload.providerTransactionId || payload.transactionId || `ZA-PSHAP-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
+    const providerTransactionId = payload.providerTransactionId || payload.transactionId;
+    if (!providerTransactionId) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new AppError('Authoritative provider transaction ID is required for South African bank settlement.', 400);
+      }
+    }
+    const finalTxId = providerTransactionId || `ZA-PSHAP-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
     const clearingCode = payload.clearingCode || payload.bankRef || 'RTC-PAYSHAP-SETTLED';
 
     return {
       rail: 'PAYSHAP_EFT',
       verified: true,
-      providerTransactionId,
+      providerTransactionId: finalTxId,
       referenceNumber: (payload.referenceNumber || payload.reference || expectedPayment?.providerRef || '').toUpperCase(),
       bankRef: clearingCode,
       amountMinor: settledAmountMinor,

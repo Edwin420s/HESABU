@@ -133,15 +133,15 @@ export async function verifyStellarTransaction({
       }
     }
 
-    // Validate transferred operation amount against expected amount
+    // Validate transferred operation amount strictly against expected amount
     if (expectedAmountMinor !== undefined && expectedAmountMinor !== null) {
       // Stellar operation amounts are decimal strings (e.g. "50.0000000")
       // Convert to minor units based on currency/asset decimals (USDC: 2 decimals in minor units)
       const opAmountStr = String(op.amount || op.dest_amount || '0');
       const opMinor = parseMinorUnits(opAmountStr, expectedAssetCode === 'USDC' ? 'USD' : 'KES');
-      if (opMinor < BigInt(expectedAmountMinor)) {
+      if (opMinor !== BigInt(expectedAmountMinor)) {
         throw new AppError(
-          `Stellar transferred amount insufficient: expected ${expectedAmountMinor} minor units, but operation transferred ${opMinor}.`,
+          `Stellar transferred amount mismatch: expected exactly ${expectedAmountMinor} minor units, but on-chain operation transferred ${opMinor}.`,
           400
         );
       }
