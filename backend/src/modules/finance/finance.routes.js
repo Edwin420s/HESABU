@@ -11,6 +11,7 @@ import { initiateMpesaSTKPush, verifyMpesaCallback } from '../../integrations/mp
 import { isAuthorizedDarajaIp, validateStkCallbackPayload } from '../../integrations/mpesa/mpesaSecurity.js';
 import { SouthAfricaEftPaymentProvider } from '../../integrations/providers/paymentProvider.js';
 import { agenticFinanceEngine } from '../agent/agentService.js';
+import { postingService } from './postingService.js';
 
 const router = Router();
 
@@ -142,18 +143,16 @@ router.post('/payments/mpesa-callback', asyncHandler(async (req, res) => {
       }
     });
 
-    const journal = await tx.journalEntry.create({
-      data: {
-        workspaceId: payment.workspaceId,
-        reference: `SETTLEMENT-MPESA-${settlement.id}`,
-        description: `Verified Safaricom M-Pesa settlement (${verified.receiptNumber}) for obligation ${payment.obligationId}`,
-        lines: {
-          create: [
-            { accountCode: '1010-MPESA-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
-            { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
-          ]
-        }
-      }
+    const journal = await postingService.postEntry({
+      workspaceId: payment.workspaceId,
+      reference: `SETTLEMENT-MPESA-${settlement.id}`,
+      description: `Verified Safaricom M-Pesa settlement (${verified.receiptNumber}) for obligation ${payment.obligationId}`,
+      lines: [
+        { accountCode: '1010-MPESA-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
+        { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
+      ],
+      actorId: null,
+      tx
     });
 
     await tx.auditLog.create({
@@ -276,18 +275,16 @@ router.post('/payments/payshap-webhook', asyncHandler(async (req, res) => {
     });
     finalSettlementId = settlement.id;
 
-    const journal = await tx.journalEntry.create({
-      data: {
-        workspaceId: payment.workspaceId,
-        reference: `SETTLEMENT-PAYSHAP-${settlement.id}`,
-        description: `Verified PayShap settlement (${verified.providerTransactionId}) for obligation ${payment.obligationId}`,
-        lines: {
-          create: [
-            { accountCode: '1030-PAYSHAP-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
-            { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
-          ]
-        }
-      }
+    const journal = await postingService.postEntry({
+      workspaceId: payment.workspaceId,
+      reference: `SETTLEMENT-PAYSHAP-${settlement.id}`,
+      description: `Verified PayShap settlement (${verified.providerTransactionId}) for obligation ${payment.obligationId}`,
+      lines: [
+        { accountCode: '1030-PAYSHAP-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
+        { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
+      ],
+      actorId: null,
+      tx
     });
 
     await tx.auditLog.create({
@@ -426,6 +423,16 @@ router.post('/obligations/:id/payments', requireWorkspaceRoleByObligation, async
   const obligation = req.obligation;
   if (obligation.status === 'CANCELLED') throw new AppError('This obligation has been cancelled.', 400);
 
+  if (data.rail === 'MPESA' && obligation.currency !== 'KES') {
+    throw new AppError('Safaricom M-Pesa rail only supports Kenyan Shillings (KES).', 400);
+  }
+  if (data.rail === 'PAYSHAP_EFT' && obligation.currency !== 'ZAR') {
+    throw new AppError('PayShap & Instant EFT rail only supports South African Rand (ZAR).', 400);
+  }
+  if (data.rail === 'STELLAR' && !['KES', 'USD'].includes(obligation.currency)) {
+    throw new AppError('Stellar settlement rail currently supports USD and KES.', 400);
+  }
+
   const settled = await prisma.settlement.aggregate({
     where: { obligationId: obligation.id },
     _sum: { amountMinor: true }
@@ -563,16 +570,16 @@ router.post('/payments/:id/dev-confirm', asyncHandler(async (req, res) => {
         externalRef: `DEV-${current.id}`
       }
     });
-    const journal = await tx.journalEntry.create({
-      data: {
-        workspaceId: current.workspaceId,
-        reference: `SETTLEMENT-${settlement.id}`,
-        description: `Verified development settlement for obligation ${current.obligationId}`,
-        lines: { create: [
-          { accountCode: '1000-CASH-CLEARING', side: 'DEBIT', amountMinor: current.amountMinor, currency: current.currency },
-          { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: current.amountMinor, currency: current.currency }
-        ]}
-      }
+    const journal = await postingService.postEntry({
+      workspaceId: current.workspaceId,
+      reference: `SETTLEMENT-${settlement.id}`,
+      description: `Verified development settlement for obligation ${current.obligationId}`,
+      lines: [
+        { accountCode: '1000-CASH-CLEARING', side: 'DEBIT', amountMinor: current.amountMinor, currency: current.currency },
+        { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: current.amountMinor, currency: current.currency }
+      ],
+      actorId: req.user.id,
+      tx
     });
     await audit(tx, current.workspaceId, req.user.id, 'PAYMENT_CONFIRMED_DEV', 'Payment', current.id, { journalEntryId: journal.id });
     const total = await tx.settlement.aggregate({ where: { obligationId: current.obligationId }, _sum: { amountMinor: true } });
@@ -644,16 +651,16 @@ router.post('/payments/:id/stellar-confirm', asyncHandler(async (req, res) => {
       }
     });
 
-    const journal = await tx.journalEntry.create({
-      data: {
-        workspaceId: payment.workspaceId,
-        reference: `SETTLEMENT-STELLAR-${settlement.id}`,
-        description: `Verified Stellar network settlement (${data.txHash.slice(0, 16)}...) for obligation ${payment.obligationId}`,
-        lines: { create: [
-          { accountCode: '1000-STELLAR-USDC-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
-          { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
-        ]}
-      }
+    const journal = await postingService.postEntry({
+      workspaceId: payment.workspaceId,
+      reference: `SETTLEMENT-STELLAR-${settlement.id}`,
+      description: `Verified Stellar network settlement (${data.txHash.slice(0, 16)}...) for obligation ${payment.obligationId}`,
+      lines: [
+        { accountCode: '1000-STELLAR-USDC-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
+        { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
+      ],
+      actorId: req.user.id,
+      tx
     });
 
     await audit(tx, payment.workspaceId, req.user.id, 'PAYMENT_CONFIRMED_STELLAR', 'Payment', payment.id, {
@@ -724,16 +731,16 @@ router.post('/payments/:id/mpesa-confirm', asyncHandler(async (req, res) => {
       }
     });
 
-    const journal = await tx.journalEntry.create({
-      data: {
-        workspaceId: payment.workspaceId,
-        reference: `SETTLEMENT-MPESA-${settlement.id}`,
-        description: `Verified M-Pesa settlement (${cleanReceipt}) for obligation ${payment.obligationId}`,
-        lines: { create: [
-          { accountCode: '1010-MPESA-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
-          { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
-        ]}
-      }
+    const journal = await postingService.postEntry({
+      workspaceId: payment.workspaceId,
+      reference: `SETTLEMENT-MPESA-${settlement.id}`,
+      description: `Verified M-Pesa settlement (${cleanReceipt}) for obligation ${payment.obligationId}`,
+      lines: [
+        { accountCode: '1010-MPESA-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
+        { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
+      ],
+      actorId: req.user.id,
+      tx
     });
 
     await audit(tx, payment.workspaceId, req.user.id, 'PAYMENT_CONFIRMED_MPESA_MANUAL', 'Payment', payment.id, {
@@ -810,16 +817,16 @@ router.post('/payments/:id/payshap-confirm', asyncHandler(async (req, res) => {
       }
     });
 
-    const journal = await tx.journalEntry.create({
-      data: {
-        workspaceId: payment.workspaceId,
-        reference: `SETTLEMENT-PAYSHAP-${settlement.id}`,
-        description: `Verified PayShap/EFT settlement (${cleanRef}) for obligation ${payment.obligationId} by ${req.user.id}`,
-        lines: { create: [
-          { accountCode: '1030-PAYSHAP-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
-          { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
-        ]}
-      }
+    const journal = await postingService.postEntry({
+      workspaceId: payment.workspaceId,
+      reference: `SETTLEMENT-PAYSHAP-${settlement.id}`,
+      description: `Verified PayShap/EFT settlement (${cleanRef}) for obligation ${payment.obligationId} by ${req.user.id}`,
+      lines: [
+        { accountCode: '1030-PAYSHAP-CLEARING', side: 'DEBIT', amountMinor: payment.amountMinor, currency: payment.currency },
+        { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: payment.amountMinor, currency: payment.currency }
+      ],
+      actorId: req.user.id,
+      tx
     });
 
     await audit(tx, payment.workspaceId, req.user.id, 'PAYMENT_CONFIRMED_PAYSHAP_MANUAL', 'Payment', payment.id, {
@@ -1046,16 +1053,16 @@ router.post('/expenses/:id/pay', asyncHandler(async (req, res) => {
       data: { status: 'PAID' }
     });
 
-    const journal = await tx.journalEntry.create({
-      data: {
-        workspaceId: expense.workspaceId,
-        reference: `EXPENSE-PAYOUT-${expense.id}`,
-        description: `Expense payout for ${expense.title} (${expense.category})`,
-        lines: { create: [
-          { accountCode: '5000-OPERATING-EXPENSES', side: 'DEBIT', amountMinor: expense.amountMinor, currency: expense.currency },
-          { accountCode: '1000-CASH-CLEARING', side: 'CREDIT', amountMinor: expense.amountMinor, currency: expense.currency }
-        ]}
-      }
+    const journal = await postingService.postEntry({
+      workspaceId: expense.workspaceId,
+      reference: `EXPENSE-PAYOUT-${expense.id}`,
+      description: `Expense payout for ${expense.title} (${expense.category})`,
+      lines: [
+        { accountCode: '5000-OPERATING-EXPENSES', side: 'DEBIT', amountMinor: expense.amountMinor, currency: expense.currency },
+        { accountCode: '1000-CASH-CLEARING', side: 'CREDIT', amountMinor: expense.amountMinor, currency: expense.currency }
+      ],
+      actorId: req.user.id,
+      tx
     });
 
     await audit(tx, expense.workspaceId, req.user.id, 'EXPENSE_PAID', 'Expense', expense.id, { journalEntryId: journal.id });
@@ -1093,41 +1100,14 @@ router.post('/journal/:id/reverse', asyncHandler(async (req, res) => {
     throw new AppError('Permission required to reverse journal entries.', 403);
   }
 
-  const result = await prisma.$transaction(async tx => {
-    // 1. Mark original entry reversed
-    await tx.journalEntry.update({
-      where: { id: entry.id },
-      data: { status: 'REVERSED' }
-    });
-
-    // 2. Create the exact reversing entry with flipped sides (Debit <-> Credit)
-    const reversingEntry = await tx.journalEntry.create({
-      data: {
-        workspaceId: entry.workspaceId,
-        reference: `REVERSAL-${entry.reference}`,
-        description: `Reversal of entry ${entry.reference}: ${entry.description}`,
-        reversedEntryId: entry.id,
-        lines: {
-          create: entry.lines.map(l => ({
-            accountCode: l.accountCode,
-            side: l.side === 'DEBIT' ? 'CREDIT' : 'DEBIT',
-            amountMinor: l.amountMinor,
-            currency: l.currency
-          }))
-        }
-      },
-      include: { lines: true }
-    });
-
-    await audit(tx, entry.workspaceId, req.user.id, 'JOURNAL_REVERSED', 'JournalEntry', entry.id, {
-      originalReference: entry.reference,
-      reversalReference: reversingEntry.reference
-    });
-
-    return reversingEntry;
+  const reversingEntry = await postingService.reverseEntry({
+    journalEntryId: entry.id,
+    reference: `REVERSAL-${entry.reference}`,
+    reason: req.body?.reason || entry.description,
+    actorId: req.user.id
   });
 
-  res.json({ reversingEntry: jsonSafe(result), notice: 'Journal entry reversed with balanced counter-entry.' });
+  res.json({ reversingEntry: jsonSafe(reversingEntry), notice: 'Journal entry reversed with balanced counter-entry.' });
 }));
 
 // Financial Statements: Trial Balance (Multi-Currency Aware)

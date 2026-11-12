@@ -4,6 +4,7 @@ import { prisma } from '../../config/prisma.js';
 import { authenticate, requireWorkspaceRole, allowRoles } from '../../middleware/auth.js';
 import { AppError, asyncHandler } from '../../shared/errors.js';
 import { parseMinorUnits, jsonSafe } from '../../shared/money.js';
+import { postingService } from '../finance/postingService.js';
 
 export const billsRouter = Router();
 
@@ -147,19 +148,17 @@ billsRouter.post('/bills/:id/approve', asyncHandler(async (req, res) => {
       }
     });
 
-    // Post GAAP bill recognition: Debit Expense (5000), Credit Accounts Payable (2000)
-    await tx.journalEntry.create({
-      data: {
-        workspaceId: bill.workspaceId,
-        reference: `BILL-ACCRUAL-${bill.id.slice(-8)}-${Date.now()}`,
-        description: `Approved supplier payable from ${bill.supplier.name} (${bill.billNumber})`,
-        lines: {
-          create: [
-            { accountCode: '5000-OPERATING-EXPENSES', side: 'DEBIT', amountMinor: bill.amountMinor, currency: bill.currency },
-            { accountCode: '2000-ACCOUNTS-PAYABLE', side: 'CREDIT', amountMinor: bill.amountMinor, currency: bill.currency }
-          ]
-        }
-      }
+    // Post GAAP bill recognition via authoritative PostingService: Debit Expense (5000), Credit Accounts Payable (2000)
+    await postingService.postEntry({
+      workspaceId: bill.workspaceId,
+      reference: `BILL-ACCRUAL-${bill.id.slice(-8)}-${Date.now()}`,
+      description: `Approved supplier payable from ${bill.supplier.name} (${bill.billNumber})`,
+      lines: [
+        { accountCode: '5000-OPERATING-EXPENSES', side: 'DEBIT', amountMinor: bill.amountMinor, currency: bill.currency },
+        { accountCode: '2000-ACCOUNTS-PAYABLE', side: 'CREDIT', amountMinor: bill.amountMinor, currency: bill.currency }
+      ],
+      actorId: req.user.id,
+      tx
     });
 
     await tx.auditLog.create({
@@ -208,19 +207,17 @@ billsRouter.post('/bills/:id/pay', asyncHandler(async (req, res) => {
 
     const cashAccount = bill.workspace.country === 'ZA' ? '1030-BANK-CLEARING' : '1000-CASH-CLEARING';
 
-    // Post GAAP payment journal: Debit Accounts Payable (2000), Credit Cash/Bank (1000/1030)
-    await tx.journalEntry.create({
-      data: {
-        workspaceId: bill.workspaceId,
-        reference: `BILL-PAY-${bill.id.slice(-8)}-${Date.now()}`,
-        description: `Disbursed supplier payment to ${bill.supplier.name} via ${rail} (${cleanRef})`,
-        lines: {
-          create: [
-            { accountCode: '2000-ACCOUNTS-PAYABLE', side: 'DEBIT', amountMinor: bill.amountMinor, currency: bill.currency },
-            { accountCode: cashAccount, side: 'CREDIT', amountMinor: bill.amountMinor, currency: bill.currency }
-          ]
-        }
-      }
+    // Post GAAP payment journal via authoritative PostingService: Debit Accounts Payable (2000), Credit Cash/Bank (1000/1030)
+    await postingService.postEntry({
+      workspaceId: bill.workspaceId,
+      reference: `BILL-PAY-${bill.id.slice(-8)}-${Date.now()}`,
+      description: `Disbursed supplier payment to ${bill.supplier.name} via ${rail} (${cleanRef})`,
+      lines: [
+        { accountCode: '2000-ACCOUNTS-PAYABLE', side: 'DEBIT', amountMinor: bill.amountMinor, currency: bill.currency },
+        { accountCode: cashAccount, side: 'CREDIT', amountMinor: bill.amountMinor, currency: bill.currency }
+      ],
+      actorId: req.user.id,
+      tx
     });
 
     await tx.auditLog.create({

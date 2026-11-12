@@ -269,16 +269,28 @@ export class LoanService {
         if (unallocated <= 0n) break;
         if (row.status === 'PAID') continue;
         const rowDue = row.totalDueMinor;
-        const rowPaid = (row.principalPaidMinor || 0n) + (row.interestPaidMinor || 0n);
+        const currentInterestPaid = row.interestPaidMinor || 0n;
+        const currentPrincipalPaid = row.principalPaidMinor || 0n;
+        const rowPaid = currentPrincipalPaid + currentInterestPaid;
         const rowRemaining = rowDue > rowPaid ? rowDue - rowPaid : 0n;
         if (rowRemaining > 0n) {
           const allocateToRow = unallocated < rowRemaining ? unallocated : rowRemaining;
-          const newRowPaid = rowPaid + allocateToRow;
+
+          // Allocate to interest portion first, then remainder to principal portion
+          const remainingInterestDue = row.interestDueMinor > currentInterestPaid ? row.interestDueMinor - currentInterestPaid : 0n;
+          const allocateInterest = allocateToRow < remainingInterestDue ? allocateToRow : remainingInterestDue;
+          const allocatePrincipal = allocateToRow - allocateInterest;
+
+          const newInterestPaid = currentInterestPaid + allocateInterest;
+          const newPrincipalPaid = currentPrincipalPaid + allocatePrincipal;
+          const newRowPaid = newInterestPaid + newPrincipalPaid;
           const rowStatus = newRowPaid >= rowDue ? 'PAID' : 'PARTIALLY_PAID';
+
           await tx.loanScheduleRow.update({
             where: { id: row.id },
             data: {
-              principalPaidMinor: (row.principalPaidMinor || 0n) + allocateToRow,
+              interestPaidMinor: newInterestPaid,
+              principalPaidMinor: newPrincipalPaid,
               status: rowStatus
             }
           });

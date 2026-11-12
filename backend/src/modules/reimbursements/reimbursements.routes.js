@@ -4,6 +4,7 @@ import { prisma } from '../../config/prisma.js';
 import { authenticate, requireWorkspaceRole, allowRoles } from '../../middleware/auth.js';
 import { AppError, asyncHandler } from '../../shared/errors.js';
 import { parseMinorUnits, jsonSafe } from '../../shared/money.js';
+import { postingService } from '../finance/postingService.js';
 
 const router = Router();
 router.use(authenticate);
@@ -42,6 +43,13 @@ router.post('/workspaces/:workspaceId/reimbursements', requireWorkspaceRole, asy
     amountMinor = parseMinorUnits(data.amount, workspace.currency);
   } else {
     throw new AppError('Reimbursement amount is required', 400);
+  }
+
+  if (data.expenseId) {
+    const expense = await prisma.expense.findUnique({ where: { id: data.expenseId } });
+    if (!expense || expense.workspaceId !== workspace.id) {
+      throw new AppError('Referenced expense not found in this workspace.', 404);
+    }
   }
 
   const claimantName = data.claimantName || req.user.name || req.user.email || 'Member';
@@ -134,18 +142,16 @@ router.post('/reimbursements/:id/pay', asyncHandler(async (req, res) => {
       data: { status: 'PAID', paymentRef: ref }
     });
 
-    const journal = await tx.journalEntry.create({
-      data: {
-        workspaceId: item.workspaceId,
-        reference: `REIMBURSEMENT-${item.id}`,
-        description: `Reimbursement payout to ${item.claimantName} (${ref})`,
-        lines: {
-          create: [
-            { accountCode: '5050-MEMBER-REIMBURSEMENTS', side: 'DEBIT', amountMinor: item.amountMinor, currency: item.currency },
-            { accountCode: '1000-CASH-CLEARING', side: 'CREDIT', amountMinor: item.amountMinor, currency: item.currency }
-          ]
-        }
-      }
+    const journal = await postingService.postEntry({
+      workspaceId: item.workspaceId,
+      reference: `REIMBURSEMENT-${item.id}`,
+      description: `Reimbursement payout to ${item.claimantName} (${ref})`,
+      lines: [
+        { accountCode: '5050-MEMBER-REIMBURSEMENTS', side: 'DEBIT', amountMinor: item.amountMinor, currency: item.currency },
+        { accountCode: '1000-CASH-CLEARING', side: 'CREDIT', amountMinor: item.amountMinor, currency: item.currency }
+      ],
+      actorId: req.user.id,
+      tx
     });
 
     await tx.auditLog.create({

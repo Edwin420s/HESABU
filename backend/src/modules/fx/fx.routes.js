@@ -96,6 +96,30 @@ fxRouter.get('/workspaces/:workspaceId/fx/quotes', authenticate, requireWorkspac
 });
 
 /**
+ * POST /api/fx/quotes/:quoteRef/lock
+ * Lock an active FX quote
+ */
+fxRouter.post('/fx/quotes/:quoteRef/lock', authenticate, async (req, res, next) => {
+  try {
+    const { quoteRef } = req.params;
+    const quote = await prisma.fXQuote.findUnique({ where: { quoteRef } });
+    if (!quote) throw new AppError('FX quote not found.', 404);
+
+    const membership = await prisma.membership.findUnique({
+      where: { userId_workspaceId: { userId: req.user.id, workspaceId: quote.workspaceId } }
+    });
+    if (!membership || !['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(membership.role)) {
+      throw new AppError('Only workspace Owners, Admins, or Finance Managers can lock FX quotes.', 403);
+    }
+
+    const lockedQuote = await fxService.lockQuote(quoteRef);
+    res.json(jsonSafe(lockedQuote));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * POST /api/fx/quotes/:quoteRef/execute
  * Execute conversion and post multi-currency balanced journal entries
  */

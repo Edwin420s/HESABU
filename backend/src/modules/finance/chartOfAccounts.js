@@ -26,6 +26,13 @@ export const CHART_OF_ACCOUNTS = {
     normalBalance: NORMAL_BALANCES.DEBIT,
     description: 'Holding account for cash settlements and disbursements before clearing'
   },
+  '1000-STELLAR-USDC-CLEARING': {
+    code: '1000-STELLAR-USDC-CLEARING',
+    name: 'Stellar USDC Settlement Clearing',
+    category: ACCOUNT_CATEGORIES.ASSET,
+    normalBalance: NORMAL_BALANCES.DEBIT,
+    description: 'On-chain Stellar stablecoin settlement clearing'
+  },
   '1010-MPESA-CLEARING': {
     code: '1010-MPESA-CLEARING',
     name: 'Safaricom M-Pesa Mobile Money Clearing',
@@ -46,6 +53,13 @@ export const CHART_OF_ACCOUNTS = {
     category: ACCOUNT_CATEGORIES.ASSET,
     normalBalance: NORMAL_BALANCES.DEBIT,
     description: 'South African National Payment System PayShap & bank EFT settlements'
+  },
+  '1030-BANK-CLEARING': {
+    code: '1030-BANK-CLEARING',
+    name: 'South Africa Commercial Bank Clearing',
+    category: ACCOUNT_CATEGORIES.ASSET,
+    normalBalance: NORMAL_BALANCES.DEBIT,
+    description: 'South African commercial bank accounts clearing'
   },
   '1040-FX-CLEARING': {
     code: '1040-FX-CLEARING',
@@ -77,6 +91,13 @@ export const CHART_OF_ACCOUNTS = {
     normalBalance: NORMAL_BALANCES.CREDIT,
     description: 'Vendor bills and procurement payables pending payment'
   },
+  '2000-CUSTOMER-DEPOSITS': {
+    code: '2000-CUSTOMER-DEPOSITS',
+    name: 'Unallocated Customer Deposits & Retainers',
+    category: ACCOUNT_CATEGORIES.LIABILITY,
+    normalBalance: NORMAL_BALANCES.CREDIT,
+    description: 'Unallocated payments received pending invoice matching'
+  },
   '2100-CONTRIBUTIONS-PAYABLE': {
     code: '2100-CONTRIBUTIONS-PAYABLE',
     name: 'Member Savings & Contributions Held in Custody',
@@ -90,6 +111,13 @@ export const CHART_OF_ACCOUNTS = {
     category: ACCOUNT_CATEGORIES.LIABILITY,
     normalBalance: NORMAL_BALANCES.CREDIT,
     description: 'Rotational pot funds accumulated and owed to round beneficiary'
+  },
+  '2300-VAT-PAYABLE': {
+    code: '2300-VAT-PAYABLE',
+    name: 'Value Added Tax (VAT) Payable to Revenue Authority',
+    category: ACCOUNT_CATEGORIES.LIABILITY,
+    normalBalance: NORMAL_BALANCES.CREDIT,
+    description: 'Collected sales tax and VAT owed to statutory tax authorities (KRA / SARS)'
   },
   '2300-TABLE-BANKING-DEPOSITS': {
     code: '2300-TABLE-BANKING-DEPOSITS',

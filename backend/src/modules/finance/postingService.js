@@ -22,7 +22,8 @@ export class PostingService {
     lines,
     actorId = null,
     metadata = null,
-    tx = null
+    tx = null,
+    reversedEntryId = null
   }) {
     if (!workspaceId) throw new AppError('workspaceId is required to post a journal entry.', 400);
     if (!reference) throw new AppError('Journal entry reference is required.', 400);
@@ -83,6 +84,7 @@ export class PostingService {
           reference,
           description: description || `Journal Entry ${reference}`,
           status: 'POSTED',
+          reversedEntryId: reversedEntryId || null,
           lines: {
             create: preparedLines
           }
@@ -115,7 +117,7 @@ export class PostingService {
   /**
    * Reverses a posted journal entry with an exact GAAP contra-entry.
    */
-  async reverseEntry({ journalEntryId, reason, actorId = null }) {
+  async reverseEntry({ journalEntryId, reason, actorId = null, reference = null }) {
     return prisma.$transaction(async (tx) => {
       const original = await tx.journalEntry.findUnique({
         where: { id: journalEntryId },
@@ -136,12 +138,13 @@ export class PostingService {
 
       const reversal = await this.postEntry({
         workspaceId: original.workspaceId,
-        reference: `REV-${original.reference}`,
+        reference: reference || `REV-${original.reference}`,
         description: `Reversal of ${original.reference}: ${reason || 'Correction'}`,
         lines: reversalLines,
         actorId,
         metadata: { originalEntryId: original.id, reason },
-        tx
+        tx,
+        reversedEntryId: original.id
       });
 
       await tx.journalEntry.update({

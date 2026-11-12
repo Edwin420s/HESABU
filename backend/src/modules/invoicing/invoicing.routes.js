@@ -4,6 +4,7 @@ import { prisma } from '../../config/prisma.js';
 import { env } from '../../config/env.js';
 import { authenticate, requireWorkspaceRole, allowRoles } from '../../middleware/auth.js';
 import { AppError, asyncHandler } from '../../shared/errors.js';
+import { postingService } from '../finance/postingService.js';
 import {
   parseMinorUnits,
   jsonSafe,
@@ -181,7 +182,7 @@ invoicingRouter.post('/workspaces/:workspaceId/invoices', requireWorkspaceRole, 
       }
     });
 
-    // Post GAAP accrual journal: Debit Accounts Receivable (1200), Credit Revenue (4000), Credit VAT Payable (2300)
+    // Post GAAP accrual journal via authoritative PostingService: Debit Accounts Receivable (1200), Credit Revenue (4000), Credit VAT Payable (2300)
     const invoiceLines = [
       { accountCode: '1200-ACCOUNTS-RECEIVABLE', side: 'DEBIT', amountMinor: totalMinor, currency: workspace.currency }
     ];
@@ -192,13 +193,13 @@ invoicingRouter.post('/workspaces/:workspaceId/invoices', requireWorkspaceRole, 
       invoiceLines.push({ accountCode: '4000-REVENUE', side: 'CREDIT', amountMinor: totalMinor, currency: workspace.currency });
     }
 
-    await tx.journalEntry.create({
-      data: {
-        workspaceId: workspace.id,
-        reference: `INV-POST-${invoice.id.slice(-8)}-${Date.now()}`,
-        description: `Commercial Invoice issued to ${customer.name} (${invoice.invoiceNumber})`,
-        lines: { create: invoiceLines }
-      }
+    await postingService.postEntry({
+      workspaceId: workspace.id,
+      reference: `INV-POST-${invoice.id.slice(-8)}-${Date.now()}`,
+      description: `Commercial Invoice issued to ${customer.name} (${invoice.invoiceNumber})`,
+      lines: invoiceLines,
+      actorId: req.user.id,
+      tx
     });
 
     await tx.auditLog.create({
@@ -325,18 +326,16 @@ invoicingRouter.post('/invoices/:id/settle', asyncHandler(async (req, res) => {
 
     // Post GAAP cash receipt journal entry: Debit Cash/Bank (1000/1030), Credit Accounts Receivable (1200)
     const cashAccount = invoice.workspace.country === 'ZA' ? '1030-BANK-CLEARING' : '1000-CASH-CLEARING';
-    await tx.journalEntry.create({
-      data: {
-        workspaceId: invoice.workspaceId,
-        reference: `INV-RECEIPT-${invoice.id.slice(-8)}-${Date.now()}`,
-        description: `Settlement received for invoice ${invoice.invoiceNumber} from ${invoice.customer.name}`,
-        lines: {
-          create: [
-            { accountCode: cashAccount, side: 'DEBIT', amountMinor: paymentAmountMinor, currency: invoice.currency },
-            { accountCode: '1200-ACCOUNTS-RECEIVABLE', side: 'CREDIT', amountMinor: paymentAmountMinor, currency: invoice.currency }
-          ]
-        }
-      }
+    await postingService.postEntry({
+      workspaceId: invoice.workspaceId,
+      reference: `INV-RECEIPT-${invoice.id.slice(-8)}-${Date.now()}`,
+      description: `Settlement received for invoice ${invoice.invoiceNumber} from ${invoice.customer.name}`,
+      lines: [
+        { accountCode: cashAccount, side: 'DEBIT', amountMinor: paymentAmountMinor, currency: invoice.currency },
+        { accountCode: '1200-ACCOUNTS-RECEIVABLE', side: 'CREDIT', amountMinor: paymentAmountMinor, currency: invoice.currency }
+      ],
+      actorId: req.user.id,
+      tx
     });
 
     await tx.auditLog.create({
@@ -397,38 +396,45 @@ invoicingRouter.post('/invoices/:id/allocate-payment', asyncHandler(async (req, 
     throw new AppError('Only verified and confirmed payments can be allocated to invoices.', 400);
   }
 
-  const alreadyPaid = invoice.paidMinor || 0n;
-  const remainingMinor = invoice.totalMinor - alreadyPaid;
-  if (remainingMinor <= 0n) {
-    throw new AppError('Invoice is already fully settled.', 400);
-  }
-
-  // Prevent duplicate and excessive allocation of payments across invoices
-  const existingAllocations = await prisma.invoiceAllocation.aggregate({
-    where: { paymentId: payment.id },
-    _sum: { amountMinor: true }
-  });
-  const alreadyAllocated = existingAllocations._sum.amountMinor || 0n;
-  const paymentRemaining = payment.amountMinor - alreadyAllocated;
-  if (paymentRemaining <= 0n) {
-    throw new AppError('This payment has already been fully allocated to invoices.', 400);
-  }
-
-  const allocateMinor = amount
-    ? parseMinorUnits(amount, invoice.currency)
-    : (paymentRemaining < remainingMinor ? paymentRemaining : remainingMinor);
-
-  if (allocateMinor > remainingMinor) {
-    throw new AppError(`Allocation amount exceeds remaining invoice balance (${remainingMinor} minor units).`, 400);
-  }
-
-  if (allocateMinor > paymentRemaining) {
-    throw new AppError(`Allocation amount (${allocateMinor} minor units) exceeds remaining unallocated payment balance (${paymentRemaining} minor units).`, 400);
+  if (payment.currency !== invoice.currency) {
+    throw new AppError(
+      `Currency mismatch: payment currency (${payment.currency}) does not match invoice currency (${invoice.currency}). Cross-currency allocations require an explicit FX conversion.`,
+      400
+    );
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    const newPaidMinor = alreadyPaid + allocateMinor;
-    const newStatus = newPaidMinor >= invoice.totalMinor ? 'PAID' : 'PARTIALLY_PAID';
+    // Re-query under transaction lock to guarantee race-free allocation limits
+    const currentInvoice = await tx.invoice.findUnique({ where: { id: invoice.id } });
+    const currentPaid = currentInvoice.paidMinor || 0n;
+    const remainingMinor = currentInvoice.totalMinor - currentPaid;
+    if (remainingMinor <= 0n) {
+      throw new AppError('Invoice is already fully settled.', 400);
+    }
+
+    const existingAllocations = await tx.invoiceAllocation.aggregate({
+      where: { paymentId: payment.id },
+      _sum: { amountMinor: true }
+    });
+    const alreadyAllocated = existingAllocations._sum.amountMinor || 0n;
+    const paymentRemaining = payment.amountMinor - alreadyAllocated;
+    if (paymentRemaining <= 0n) {
+      throw new AppError('This payment has already been fully allocated to invoices.', 400);
+    }
+
+    const allocateMinor = amount
+      ? parseMinorUnits(amount, invoice.currency)
+      : (paymentRemaining < remainingMinor ? paymentRemaining : remainingMinor);
+
+    if (allocateMinor > remainingMinor) {
+      throw new AppError(`Allocation amount exceeds remaining invoice balance (${remainingMinor} minor units).`, 400);
+    }
+    if (allocateMinor > paymentRemaining) {
+      throw new AppError(`Allocation amount (${allocateMinor} minor units) exceeds remaining unallocated payment balance (${paymentRemaining} minor units).`, 400);
+    }
+
+    const newPaidMinor = currentPaid + allocateMinor;
+    const newStatus = newPaidMinor >= currentInvoice.totalMinor ? 'PAID' : 'PARTIALLY_PAID';
 
     const updated = await tx.invoice.update({
       where: { id: invoice.id },
@@ -447,19 +453,20 @@ invoicingRouter.post('/invoices/:id/allocate-payment', asyncHandler(async (req, 
       }
     });
 
-    const cashAccount = invoice.workspace.country === 'ZA' ? '1030-BANK-CLEARING' : '1000-CASH-CLEARING';
-    await tx.journalEntry.create({
-      data: {
-        workspaceId: invoice.workspaceId,
-        reference: `INV-ALLOC-${invoice.id.slice(-8)}-${Date.now()}`,
-        description: `Payment allocation for invoice ${invoice.invoiceNumber}`,
-        lines: {
-          create: [
-            { accountCode: cashAccount, side: 'DEBIT', amountMinor: allocateMinor, currency: invoice.currency },
-            { accountCode: '1200-ACCOUNTS-RECEIVABLE', side: 'CREDIT', amountMinor: allocateMinor, currency: invoice.currency }
-          ]
-        }
-      }
+    // Authoritative GAAP allocation:
+    // When the payment was originally confirmed, Cash was Debited and Contributions/Clearing was Credited.
+    // Allocating this payment to the invoice must Debit Contributions/Clearing and Credit Accounts Receivable,
+    // thereby settling the receivable WITHOUT double-counting cash.
+    await postingService.postEntry({
+      workspaceId: invoice.workspaceId,
+      reference: `INV-ALLOC-${invoice.id.slice(-8)}-${Date.now()}`,
+      description: `Payment allocation for invoice ${invoice.invoiceNumber}`,
+      lines: [
+        { accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'DEBIT', amountMinor: allocateMinor, currency: invoice.currency },
+        { accountCode: '1200-ACCOUNTS-RECEIVABLE', side: 'CREDIT', amountMinor: allocateMinor, currency: invoice.currency }
+      ],
+      actorId: req.user.id,
+      tx
     });
 
     await tx.auditLog.create({
@@ -579,13 +586,13 @@ invoicingRouter.post('/workspaces/:workspaceId/invoices/:id/credit-notes', requi
     }
     cnLines.push({ accountCode: '1200-ACCOUNTS-RECEIVABLE', side: 'CREDIT', amountMinor: totalCreditMinor, currency: invoice.currency });
 
-    await tx.journalEntry.create({
-      data: {
-        workspaceId: invoice.workspaceId,
-        reference: `CN-${creditNote.id.slice(-8)}-${Date.now()}`,
-        description: `Credit Note ${creditNote.creditNoteNumber} issued for Invoice ${invoice.invoiceNumber}: ${data.reason}`,
-        lines: { create: cnLines }
-      }
+    await postingService.postEntry({
+      workspaceId: invoice.workspaceId,
+      reference: `CN-${creditNote.id.slice(-8)}-${Date.now()}`,
+      description: `Credit Note ${creditNote.creditNoteNumber} issued for Invoice ${invoice.invoiceNumber}: ${data.reason}`,
+      lines: cnLines,
+      actorId: req.user.id,
+      tx
     });
 
     await tx.auditLog.create({
