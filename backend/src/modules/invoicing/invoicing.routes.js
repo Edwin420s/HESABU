@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma.js';
+import { env } from '../../config/env.js';
 import { authenticate, requireWorkspaceRole, allowRoles } from '../../middleware/auth.js';
 import { AppError, asyncHandler } from '../../shared/errors.js';
 import {
@@ -180,18 +181,23 @@ invoicingRouter.post('/workspaces/:workspaceId/invoices', requireWorkspaceRole, 
       }
     });
 
-    // Post GAAP accrual journal: Debit Accounts Receivable (1200), Credit Revenue (4000)
+    // Post GAAP accrual journal: Debit Accounts Receivable (1200), Credit Revenue (4000), Credit VAT Payable (2300)
+    const invoiceLines = [
+      { accountCode: '1200-ACCOUNTS-RECEIVABLE', side: 'DEBIT', amountMinor: totalMinor, currency: workspace.currency }
+    ];
+    if (taxMinor > 0n) {
+      invoiceLines.push({ accountCode: '4000-REVENUE', side: 'CREDIT', amountMinor: subtotalMinor, currency: workspace.currency });
+      invoiceLines.push({ accountCode: '2300-VAT-PAYABLE', side: 'CREDIT', amountMinor: taxMinor, currency: workspace.currency });
+    } else {
+      invoiceLines.push({ accountCode: '4000-REVENUE', side: 'CREDIT', amountMinor: totalMinor, currency: workspace.currency });
+    }
+
     await tx.journalEntry.create({
       data: {
         workspaceId: workspace.id,
         reference: `INV-POST-${invoice.id.slice(-8)}-${Date.now()}`,
         description: `Commercial Invoice issued to ${customer.name} (${invoice.invoiceNumber})`,
-        lines: {
-          create: [
-            { accountCode: '1200-ACCOUNTS-RECEIVABLE', side: 'DEBIT', amountMinor: totalMinor, currency: workspace.currency },
-            { accountCode: '4000-REVENUE', side: 'CREDIT', amountMinor: totalMinor, currency: workspace.currency }
-          ]
-        }
+        lines: { create: invoiceLines }
       }
     });
 
@@ -216,6 +222,13 @@ invoicingRouter.post('/workspaces/:workspaceId/invoices', requireWorkspaceRole, 
 // Settle / Allocate Payment to Invoice (Full or Partial)
 // -------------------------------------------------------------
 invoicingRouter.post('/invoices/:id/settle', asyncHandler(async (req, res) => {
+  if (env.PAYMENT_MODE === 'live' || env.NODE_ENV === 'production') {
+    throw new AppError(
+      'Direct unverified invoice settlement is prohibited in live/production mode. Payments must be verified through payment rails and allocated via /invoices/:id/allocate-payment.',
+      403
+    );
+  }
+
   const { paymentRef, rail = 'DEVELOPMENT', amount } = req.body;
   const invoice = await prisma.invoice.findUnique({
     where: { id: req.params.id },
@@ -390,12 +403,27 @@ invoicingRouter.post('/invoices/:id/allocate-payment', asyncHandler(async (req, 
     throw new AppError('Invoice is already fully settled.', 400);
   }
 
+  // Prevent duplicate and excessive allocation of payments across invoices
+  const existingAllocations = await prisma.invoiceAllocation.aggregate({
+    where: { paymentId: payment.id },
+    _sum: { amountMinor: true }
+  });
+  const alreadyAllocated = existingAllocations._sum.amountMinor || 0n;
+  const paymentRemaining = payment.amountMinor - alreadyAllocated;
+  if (paymentRemaining <= 0n) {
+    throw new AppError('This payment has already been fully allocated to invoices.', 400);
+  }
+
   const allocateMinor = amount
     ? parseMinorUnits(amount, invoice.currency)
-    : (payment.amountMinor < remainingMinor ? payment.amountMinor : remainingMinor);
+    : (paymentRemaining < remainingMinor ? paymentRemaining : remainingMinor);
 
   if (allocateMinor > remainingMinor) {
     throw new AppError(`Allocation amount exceeds remaining invoice balance (${remainingMinor} minor units).`, 400);
+  }
+
+  if (allocateMinor > paymentRemaining) {
+    throw new AppError(`Allocation amount (${allocateMinor} minor units) exceeds remaining unallocated payment balance (${paymentRemaining} minor units).`, 400);
   }
 
   const result = await prisma.$transaction(async (tx) => {
@@ -541,18 +569,22 @@ invoicingRouter.post('/workspaces/:workspaceId/invoices/:id/credit-notes', requi
       }
     });
 
-    // Reverse Accounts Receivable and Revenue via GAAP journal entry
+    // Reverse Accounts Receivable, Revenue, and VAT Liability via GAAP journal entry
+    const cnLines = [];
+    if (taxCreditMinor > 0n) {
+      cnLines.push({ accountCode: '4000-REVENUE', side: 'DEBIT', amountMinor: subtotalCreditMinor, currency: invoice.currency });
+      cnLines.push({ accountCode: '2300-VAT-PAYABLE', side: 'DEBIT', amountMinor: taxCreditMinor, currency: invoice.currency });
+    } else {
+      cnLines.push({ accountCode: '4000-REVENUE', side: 'DEBIT', amountMinor: totalCreditMinor, currency: invoice.currency });
+    }
+    cnLines.push({ accountCode: '1200-ACCOUNTS-RECEIVABLE', side: 'CREDIT', amountMinor: totalCreditMinor, currency: invoice.currency });
+
     await tx.journalEntry.create({
       data: {
         workspaceId: invoice.workspaceId,
         reference: `CN-${creditNote.id.slice(-8)}-${Date.now()}`,
         description: `Credit Note ${creditNote.creditNoteNumber} issued for Invoice ${invoice.invoiceNumber}: ${data.reason}`,
-        lines: {
-          create: [
-            { accountCode: '4000-REVENUE', side: 'DEBIT', amountMinor: totalCreditMinor, currency: invoice.currency },
-            { accountCode: '1200-ACCOUNTS-RECEIVABLE', side: 'CREDIT', amountMinor: totalCreditMinor, currency: invoice.currency }
-          ]
-        }
+        lines: { create: cnLines }
       }
     });
 
