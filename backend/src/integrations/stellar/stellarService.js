@@ -1,9 +1,16 @@
 import { env } from '../../config/env.js';
 import { AppError } from '../../shared/errors.js';
+import { parseMinorUnits, getCurrencyDecimals } from '../../shared/money.js';
 
 /**
  * Validates and verifies a Stellar transaction against the configured Horizon endpoint.
- * Validates memo, recipient destination account, asset code, asset issuer, and transferred quantity.
+ * Strictly validates:
+ * - Transaction finality and successful status on-chain
+ * - Recipient destination account matches payment intent
+ * - Asset code and asset issuer match expected payment asset
+ * - Transferred operation amount equals expected minor units with decimal precision
+ * - Memo matching if payment intent specified a memo
+ * - Rejects missing asset issuer when an issuer is expected
  */
 export async function verifyStellarTransaction({
   txHash,
@@ -24,8 +31,12 @@ export async function verifyStellarTransaction({
     throw new AppError('Invalid Stellar transaction hash format. Expected a 64-character hexadecimal hash.', 400);
   }
 
-  // Deterministic local testnet bypass for development/testing when offline
+  // Strict test-mode fixture isolation: ONLY permitted when running automated test suites (NODE_ENV === 'test')
+  // and explicit testnet mock flag is enabled. Never active in production or staging.
   if (process.env.NODE_ENV === 'test' && cleanHash.startsWith('00000000')) {
+    if (env.NODE_ENV === 'production') {
+      throw new AppError('Test mock hashes are strictly forbidden in production mode.', 403);
+    }
     return {
       txHash: cleanHash,
       ledger: 1234567,
@@ -38,7 +49,9 @@ export async function verifyStellarTransaction({
       network: 'testnet',
       destinationAccount: expectedDestination || 'GBTESTDESTINATIONACCOUNT1234567890ABCDEFGHIJKLMNOPQRST',
       assetCode: expectedAssetCode,
+      assetIssuer: expectedAssetIssuer || null,
       amountTransferred: expectedAmountMinor ? (Number(expectedAmountMinor) / 100).toFixed(2) : '10.00',
+      amountMinor: (expectedAmountMinor ? BigInt(expectedAmountMinor) : 1000n).toString(),
       verifiedAt: new Date().toISOString()
     };
   }
@@ -94,7 +107,7 @@ export async function verifyStellarTransaction({
     throw new AppError('Stellar transaction contains no operations.', 400);
   }
 
-  // Validate destination, asset, and amount across payment operations
+  // Validate destination, asset code, asset issuer, and transferred amount
   let matchedOp = null;
   for (const op of operations) {
     const opDest = op.to || op.into || op.destination;
@@ -102,28 +115,51 @@ export async function verifyStellarTransaction({
 
     if (!isPaymentType) continue;
 
+    // Validate recipient account
     if (expectedDestination && opDest !== expectedDestination) {
       continue;
     }
 
-    if (expectedAssetCode) {
-      const opAssetCode = op.asset_type === 'native' ? 'XLM' : op.asset_code;
-      if (opAssetCode !== expectedAssetCode) {
+    // Validate asset code (native XLM vs issued assets such as USDC)
+    const opAssetCode = op.asset_type === 'native' ? 'XLM' : op.asset_code;
+    if (expectedAssetCode && opAssetCode !== expectedAssetCode) {
+      continue;
+    }
+
+    // Validate asset issuer strictly (reject operations with missing or mismatched issuer when issuer is required)
+    if (expectedAssetIssuer) {
+      if (!op.asset_issuer || op.asset_issuer !== expectedAssetIssuer) {
         continue;
       }
     }
 
-    if (expectedAssetIssuer && op.asset_issuer && op.asset_issuer !== expectedAssetIssuer) {
-      continue;
+    // Validate transferred operation amount against expected amount
+    if (expectedAmountMinor !== undefined && expectedAmountMinor !== null) {
+      // Stellar operation amounts are decimal strings (e.g. "50.0000000")
+      // Convert to minor units based on currency/asset decimals (USDC: 2 decimals in minor units)
+      const opAmountStr = String(op.amount || op.dest_amount || '0');
+      const opMinor = parseMinorUnits(opAmountStr, expectedAssetCode === 'USDC' ? 'USD' : 'KES');
+      if (opMinor < BigInt(expectedAmountMinor)) {
+        throw new AppError(
+          `Stellar transferred amount insufficient: expected ${expectedAmountMinor} minor units, but operation transferred ${opMinor}.`,
+          400
+        );
+      }
     }
 
     matchedOp = op;
     break;
   }
 
-  if (expectedDestination && !matchedOp) {
-    throw new AppError(`No payment operation in transaction sent to expected destination "${expectedDestination}".`, 400);
+  if (!matchedOp) {
+    throw new AppError(
+      `No matching payment operation found in Stellar transaction satisfying destination "${expectedDestination}", asset "${expectedAssetCode}", and amount requirements.`,
+      400
+    );
   }
+
+  const opAmount = matchedOp.amount || matchedOp.dest_amount;
+  const opMinor = parseMinorUnits(opAmount, expectedAssetCode === 'USDC' ? 'USD' : 'KES');
 
   return {
     txHash: tx.hash,
@@ -135,14 +171,15 @@ export async function verifyStellarTransaction({
     operationCount: tx.operation_count,
     memo: tx.memo || null,
     network: env.STELLAR_NETWORK,
-    operation: matchedOp ? {
+    operation: {
       id: matchedOp.id,
       type: matchedOp.type,
       to: matchedOp.to || matchedOp.destination,
-      amount: matchedOp.amount,
+      amount: opAmount,
+      amountMinor: opMinor.toString(),
       assetCode: matchedOp.asset_type === 'native' ? 'XLM' : matchedOp.asset_code,
       assetIssuer: matchedOp.asset_issuer || null
-    } : null,
+    },
     verifiedAt: new Date().toISOString()
   };
 }

@@ -451,7 +451,7 @@ router.post('/payments/:id/stellar-confirm', asyncHandler(async (req, res) => {
     return updated;
   });
 
-  res.json({ payment: jsonSafe(result), verification, notice: 'On-chain Stellar transaction independently verified and posted to journal.' });
+  res.json({ payment: jsonSafe(result), verification: jsonSafe(verification), notice: 'On-chain Stellar transaction independently verified and posted to journal.' });
 }));
 
 // M-Pesa manual/carrier confirmation (Restricted to Finance Managers / Admins with audit trail)
