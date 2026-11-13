@@ -79,35 +79,35 @@ export function AccountsView({ workspaceId, currency, setNotice }) {
 
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-emerald-500 transition" onClick={() => setFilterType('ASSET')}>
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">1000 Series</span>
-          <div className="text-xl font-extrabold text-emerald-800 mt-0.5">{assetCount}</div>
-          <span className="text-xs text-slate-600 font-medium">Assets</span>
+        <div className="bg-surface-50 p-3.5 rounded-xl border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)] cursor-pointer hover:border-brand-500 transition" onClick={() => setFilterType('ASSET')}>
+          <span className="text-[10px] font-extrabold text-slate-800 uppercase tracking-wider">1000 Series</span>
+          <div className="text-xl font-black text-brand-900 mt-0.5">{assetCount}</div>
+          <span className="text-xs text-slate-700 font-semibold">Assets</span>
         </div>
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-emerald-500 transition" onClick={() => setFilterType('LIABILITY')}>
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">2000 Series</span>
-          <div className="text-xl font-extrabold text-blue-800 mt-0.5">{liabilityCount}</div>
-          <span className="text-xs text-slate-600 font-medium">Liabilities</span>
+        <div className="bg-surface-50 p-3.5 rounded-xl border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)] cursor-pointer hover:border-brand-500 transition" onClick={() => setFilterType('LIABILITY')}>
+          <span className="text-[10px] font-extrabold text-slate-800 uppercase tracking-wider">2000 Series</span>
+          <div className="text-xl font-black text-blue-900 mt-0.5">{liabilityCount}</div>
+          <span className="text-xs text-slate-700 font-semibold">Liabilities</span>
         </div>
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-brand-600 transition" onClick={() => setFilterType('EQUITY')}>
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">3000 Series</span>
-          <div className="text-xl font-extrabold text-brand-900 mt-0.5">{equityCount}</div>
-          <span className="text-xs text-slate-600 font-medium">Equity</span>
+        <div className="bg-surface-50 p-3.5 rounded-xl border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)] cursor-pointer hover:border-brand-600 transition" onClick={() => setFilterType('EQUITY')}>
+          <span className="text-[10px] font-extrabold text-slate-800 uppercase tracking-wider">3000 Series</span>
+          <div className="text-xl font-black text-brand-900 mt-0.5">{equityCount}</div>
+          <span className="text-xs text-slate-700 font-semibold">Equity</span>
         </div>
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-emerald-500 transition" onClick={() => setFilterType('REVENUE')}>
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">4000 Series</span>
-          <div className="text-xl font-extrabold text-teal-800 mt-0.5">{revenueCount}</div>
-          <span className="text-xs text-slate-600 font-medium">Revenue</span>
+        <div className="bg-surface-50 p-3.5 rounded-xl border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)] cursor-pointer hover:border-brand-500 transition" onClick={() => setFilterType('REVENUE')}>
+          <span className="text-[10px] font-extrabold text-slate-800 uppercase tracking-wider">4000 Series</span>
+          <div className="text-xl font-black text-teal-900 mt-0.5">{revenueCount}</div>
+          <span className="text-xs text-slate-700 font-semibold">Revenue</span>
         </div>
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-emerald-500 transition" onClick={() => setFilterType('EXPENSE')}>
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">5000 Series</span>
-          <div className="text-xl font-extrabold text-amber-800 mt-0.5">{expenseCount}</div>
-          <span className="text-xs text-slate-600 font-medium">Expenses</span>
+        <div className="bg-surface-50 p-3.5 rounded-xl border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)] cursor-pointer hover:border-brand-500 transition" onClick={() => setFilterType('EXPENSE')}>
+          <span className="text-[10px] font-extrabold text-slate-800 uppercase tracking-wider">5000 Series</span>
+          <div className="text-xl font-black text-amber-900 mt-0.5">{expenseCount}</div>
+          <span className="text-xs text-slate-700 font-semibold">Expenses</span>
         </div>
       </div>
 
       {/* Table Container */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="bg-surface-50 rounded-xl border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)] overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
             {['ALL', 'ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'].map(t => (
@@ -139,14 +139,14 @@ export function AccountsView({ workspaceId, currency, setNotice }) {
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
+            <thead className="bg-surface-100 text-slate-800 uppercase tracking-wider font-extrabold border-b border-surface-300">
               <tr>
-                <th className="py-3 px-4">Account Code</th>
-                <th className="py-3 px-4">Account Name & Description</th>
-                <th className="py-3 px-4">Category</th>
-                <th className="py-3 px-4 text-right">Debits Posted</th>
-                <th className="py-3 px-4 text-right">Credits Posted</th>
-                <th className="py-3 px-4 text-right">Net Balance</th>
+                <th className="py-3 px-4 font-bold text-[11px]">Account Code</th>
+                <th className="py-3 px-4 font-bold text-[11px]">Account Name & Description</th>
+                <th className="py-3 px-4 font-bold text-[11px]">Category</th>
+                <th className="py-3 px-4 text-right font-bold text-[11px]">Debits Posted</th>
+                <th className="py-3 px-4 text-right font-bold text-[11px]">Credits Posted</th>
+                <th className="py-3 px-4 text-right font-bold text-[11px]">Net Balance</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-mono">

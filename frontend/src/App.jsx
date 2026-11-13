@@ -518,7 +518,7 @@ function App() {
   const currency = workspace?.currency || 'KES';
 
   return (
-    <div className="bg-surface-100 text-slate-800 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-900 selection:text-white">
+    <div className="bg-surface-100 text-slate-800 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-200 selection:text-brand-950">
       {/* Top Global Header / Enterprise Status Bar */}
       <header className="bg-brand-950 text-white border-b border-brand-800/60 sticky top-0 z-50">
         <div className="px-4 sm:px-6 py-2.5 flex items-center justify-between gap-4">
@@ -1223,72 +1223,80 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
       {/* KPI Summary Cards Grid from Design */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Metric 1: Expected Collections */}
-        <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold mb-2">
-            <span>EXPECTED OBLIGATIONS</span>
-            <span className="p-1 rounded bg-slate-100 text-slate-600">
-              <Wallet size={16} />
+        <div className="bg-surface-50 rounded-xl p-5 border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)] relative overflow-hidden transition hover:shadow-md">
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-[11px] font-extrabold tracking-wider text-slate-900 uppercase font-sans">
+              EXPECTED OBLIGATIONS
+            </span>
+            <span className="p-1.5 rounded-lg bg-surface-200 text-brand-900 border border-surface-300">
+              <Wallet size={15} />
             </span>
           </div>
-          <div className="text-2xl font-black font-sans text-slate-900 num-tabular">
+          <div className="text-2xl font-black font-sans text-slate-900 num-tabular tracking-tight">
             {money(summary?.obligationsMinor || '0', currency)}
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px]">
-            <span className="text-emerald-700 font-medium flex items-center gap-1">
-              <ArrowUpRight size={14} />
+          <div className="mt-2.5 flex items-center justify-between text-[11px]">
+            <span className="text-brand-800 font-bold flex items-center gap-1">
+              <ArrowUpRight size={14} className="text-brand-600" />
               +18.4% this quarter
             </span>
-            <span className="text-slate-400 font-mono text-[10px]">{obligations.length} Dues & Invoices</span>
+            <span className="text-slate-600 font-mono text-[10px]">{obligations.length} Dues & Invoices</span>
           </div>
         </div>
 
         {/* Metric 2: Confirmed Settlements */}
-        <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold mb-2">
-            <span>SETTLED REVENUE & DUES</span>
-            <span className="p-1 rounded bg-emerald-50 text-emerald-700">
-              <CheckCircle2 size={16} />
+        <div className="bg-surface-50 rounded-xl p-5 border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)] relative overflow-hidden transition hover:shadow-md">
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-[11px] font-extrabold tracking-wider text-slate-900 uppercase font-sans">
+              SETTLED REVENUE & DUES
+            </span>
+            <span className="p-1.5 rounded-lg bg-brand-100 text-brand-900 border border-brand-200">
+              <CheckCircle2 size={15} />
             </span>
           </div>
-          <div className="text-2xl font-black font-sans text-emerald-800 num-tabular">
+          <div className="text-2xl font-black font-sans text-brand-900 num-tabular tracking-tight">
             {money(summary?.receivedMinor || '0', currency)}
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px]">
-            <span className="text-emerald-700 font-semibold">99.8% on-time rate</span>
-            <span className="text-slate-400 font-mono text-[10px]">M-Pesa + PayShap</span>
+          <div className="mt-2.5 flex items-center justify-between text-[11px]">
+            <span className="text-brand-800 font-bold">99.8% on-time rate</span>
+            <span className="text-slate-600 font-mono text-[10px]">M-Pesa + PayShap</span>
           </div>
         </div>
 
         {/* Metric 3: Active ROSCA Pot (Merry-Go-Round) */}
-        <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold mb-2">
-            <span>ROSCA POT (ROUND 4)</span>
-            <span className="p-1 rounded bg-amber-50 text-amber-700">
-              <Repeat size={16} />
+        <div className="bg-surface-50 rounded-xl p-5 border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)] relative overflow-hidden transition hover:shadow-md">
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-[11px] font-extrabold tracking-wider text-slate-900 uppercase font-sans">
+              ROSCA POT (ROUND 4)
+            </span>
+            <span className="p-1.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
+              <Repeat size={15} />
             </span>
           </div>
-          <div className="text-2xl font-black font-sans text-slate-900 num-tabular">
+          <div className="text-2xl font-black font-sans text-slate-900 num-tabular tracking-tight">
             {money(rosca?.[0]?.contributionPerMemberMinor ? BigInt(rosca[0].contributionPerMemberMinor) * BigInt(rosca[0].members?.length || 4) : 12000000n, currency)}
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px]">
-            <span className="text-amber-800 font-bold bg-amber-100 px-1.5 py-0.5 rounded text-[10px]">Ready for Disbursal</span>
-            <span className="text-slate-500">Beneficiary: Rotating Pool</span>
+          <div className="mt-2.5 flex items-center justify-between text-[11px]">
+            <span className="text-amber-900 font-bold bg-amber-100/80 px-2 py-0.5 rounded border border-amber-300 text-[10px]">Ready for Disbursal</span>
+            <span className="text-slate-600 font-medium">Beneficiary: Rotating Pool</span>
           </div>
         </div>
 
         {/* Metric 4: General Ledger Status */}
-        <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold mb-2">
-            <span>GENERAL LEDGER STATUS</span>
-            <span className="p-1 rounded bg-cyan-50 text-cyan-700 font-mono text-[10px] font-bold">IFRS</span>
+        <div className="bg-surface-50 rounded-xl p-5 border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)] relative overflow-hidden transition hover:shadow-md">
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-[11px] font-extrabold tracking-wider text-slate-900 uppercase font-sans">
+              GENERAL LEDGER STATUS
+            </span>
+            <span className="p-1 rounded bg-brand-100 text-brand-900 font-mono text-[10px] font-bold border border-brand-200">IFRS</span>
           </div>
-          <div className="text-2xl font-black font-sans text-emerald-800 flex items-center gap-2">
+          <div className="text-2xl font-black font-sans text-brand-900 flex items-center gap-2 tracking-tight">
             <span>BALANCED</span>
-            <CheckCircle2 size={18} className="text-emerald-600" />
+            <CheckCircle2 size={18} className="text-brand-600" />
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px]">
-            <span className="text-slate-600 font-mono">{journal.length} Journal Lines</span>
-            <span className="text-cyan-700 font-mono text-[10px] bg-cyan-50 px-1.5 py-0.5 rounded border border-cyan-200">Anchored Merkle</span>
+          <div className="mt-2.5 flex items-center justify-between text-[11px]">
+            <span className="text-slate-700 font-mono font-medium">{journal.length} Journal Lines</span>
+            <span className="text-brand-900 font-mono text-[10px] bg-brand-100 px-2 py-0.5 rounded border border-brand-200">Anchored Merkle</span>
           </div>
         </div>
       </div>
@@ -1296,45 +1304,45 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
       {/* Quick Operations Two-Column Layout from Design */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2 Cols: Live Multi-Rail Activity Feed */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div className="lg:col-span-2 bg-surface-50 rounded-xl border border-surface-300 p-5 shadow-[0_1px_3px_rgba(15,23,20,0.04)] space-y-4">
+          <div className="flex items-center justify-between border-b border-surface-200 pb-3">
             <div>
               <h2 className="text-base font-bold text-slate-900 font-sans">Authoritative Multi-Rail Settlements</h2>
-              <p className="text-xs text-slate-500">Live verified transactions matched to GAAP journal entries</p>
+              <p className="text-xs text-slate-600">Live verified transactions matched to GAAP journal entries</p>
             </div>
             <div className="flex items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 text-[11px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Real-time Ingestion
+              <span className="inline-flex items-center gap-1 text-[11px] font-mono text-brand-900 bg-brand-100 px-2.5 py-0.5 rounded-full border border-brand-200 font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-brand-600"></span> Real-time Ingestion
               </span>
             </div>
           </div>
 
           {/* Transaction List */}
-          <div className="divide-y divide-slate-100 text-xs">
+          <div className="divide-y divide-surface-200 text-xs">
             {/* Row 1: M-Pesa */}
-            <div className="py-3 flex items-center justify-between gap-3 hover:bg-slate-50/80 px-2 rounded-lg transition">
+            <div className="py-3 flex items-center justify-between gap-3 hover:bg-surface-100/90 px-2.5 rounded-lg transition">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center font-bold text-emerald-700 text-sm font-mono">
+                <div className="w-9 h-9 rounded-lg bg-brand-100 border border-brand-200 flex items-center justify-center font-bold text-brand-900 text-sm font-mono">
                   M
                 </div>
                 <div>
                   <div className="font-bold text-slate-900 flex items-center gap-2">
                     <span>M-Pesa C2B Obligation Settlement</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">QDH8291KL0</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-brand-100 text-brand-900 border border-brand-200">QDH8291KL0</span>
                   </div>
-                  <div className="text-[11px] text-slate-500">
-                    From: <span className="font-medium text-slate-700">Amina Wanjiku (0722***410)</span> • Acct: <span className="font-mono text-slate-600">1010-MPESA-CLEARING</span>
+                  <div className="text-[11px] text-slate-600">
+                    From: <span className="font-medium text-slate-800">Amina Wanjiku (0722***410)</span> • Acct: <span className="font-mono text-slate-700">1010-MPESA-CLEARING</span>
                   </div>
                 </div>
               </div>
               <div className="text-right">
-                <div className="font-black text-emerald-800 font-mono text-sm num-tabular">+ {money(2500000, currency)}</div>
-                <div className="text-[10px] text-emerald-600 font-medium">Verified & Settled</div>
+                <div className="font-black text-brand-900 font-mono text-sm num-tabular">+ {money(2500000, currency)}</div>
+                <div className="text-[10px] text-brand-700 font-semibold">Verified & Settled</div>
               </div>
             </div>
 
             {/* Row 2: PayShap */}
-            <div className="py-3 flex items-center justify-between gap-3 hover:bg-slate-50/80 px-2 rounded-lg transition">
+            <div className="py-3 flex items-center justify-between gap-3 hover:bg-surface-100/90 px-2.5 rounded-lg transition">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center font-bold text-blue-700 text-sm font-mono">
                   P
@@ -1342,44 +1350,44 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
                 <div>
                   <div className="font-bold text-slate-900 flex items-center gap-2">
                     <span>PayShap Instant Supplier Payment</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-blue-100 text-blue-800">ZA-SHAP-9821</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 border border-blue-200">ZA-SHAP-9821</span>
                   </div>
-                  <div className="text-[11px] text-slate-500">
-                    To: <span className="font-medium text-slate-700">Sovereign Telecommunications Ltd</span> • Dual Sign-off
+                  <div className="text-[11px] text-slate-600">
+                    To: <span className="font-medium text-slate-800">Sovereign Telecommunications Ltd</span> • Dual Sign-off
                   </div>
                 </div>
               </div>
               <div className="text-right">
                 <div className="font-black text-slate-900 font-mono text-sm num-tabular">- {money(850000, currency === 'KES' ? 'ZAR' : currency)}</div>
-                <div className="text-[10px] text-blue-600 font-medium">Bank Cleared</div>
+                <div className="text-[10px] text-blue-700 font-semibold">Bank Cleared</div>
               </div>
             </div>
 
             {/* Row 3: Stellar Soroban Anchor */}
-            <div className="py-3 flex items-center justify-between gap-3 hover:bg-slate-50/80 px-2 rounded-lg transition">
+            <div className="py-3 flex items-center justify-between gap-3 hover:bg-surface-100/90 px-2.5 rounded-lg transition">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-cyan-50 border border-cyan-200 flex items-center justify-center font-bold text-cyan-700 text-sm">
+                <div className="w-9 h-9 rounded-lg bg-surface-200 border border-surface-300 flex items-center justify-center font-bold text-brand-900 text-sm">
                   ⚓
                 </div>
                 <div>
                   <div className="font-bold text-slate-900 flex items-center gap-2">
                     <span>Soroban Statement Merkle Anchor</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-cyan-100 text-cyan-800">0x9f4a...8d2b</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-surface-200 text-brand-900 border border-surface-300">0x9f4a...8d2b</span>
                   </div>
-                  <div className="text-[11px] text-slate-500">
-                    Contract: <span className="font-mono text-slate-600">hesabu_anchor.wasm</span> • Ledger #48,192,041
+                  <div className="text-[11px] text-slate-600">
+                    Contract: <span className="font-mono text-slate-700">hesabu_anchor.wasm</span> • Ledger #48,192,041
                   </div>
                 </div>
               </div>
               <div className="text-right">
-                <div className="font-bold text-cyan-800 font-mono text-xs">IMMUTABLE PROOF</div>
-                <div className="text-[10px] text-cyan-600 font-medium">Stellar Testnet</div>
+                <div className="font-bold text-brand-900 font-mono text-xs">IMMUTABLE PROOF</div>
+                <div className="text-[10px] text-brand-700 font-semibold">Stellar Testnet</div>
               </div>
             </div>
           </div>
 
-          <div className="pt-2 text-center border-t border-slate-100">
-            <button onClick={() => setPage('ledger')} className="text-xs font-semibold text-brand-900 hover:text-emerald-700 transition cursor-pointer">
+          <div className="pt-2 text-center border-t border-surface-200">
+            <button onClick={() => setPage('ledger')} className="text-xs font-bold text-brand-900 hover:text-brand-700 transition cursor-pointer">
               View Full Double-Entry General Ledger ({journal.length} Entries) →
             </button>
           </div>
@@ -1388,37 +1396,37 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
         {/* Right 1 Col: Treasury Health & Financial Copilot Mini-Card */}
         <div className="space-y-4">
           {/* Financial Health Widget */}
-          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm space-y-3">
+          <div className="bg-surface-50 rounded-xl border border-surface-300 p-5 shadow-[0_1px_3px_rgba(15,23,20,0.04)] space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">Chama / SME Health Index</h3>
-              <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-800">Chama / SME Health Index</h3>
+              <span className="text-xs font-mono font-bold text-brand-900 bg-brand-100 px-2 py-0.5 rounded border border-brand-200">
                 {analytics?.rating || 'GRADE A'} ({analytics?.healthScore || 94}/100)
               </span>
             </div>
             
             <div className="space-y-2">
               <div className="flex justify-between text-xs">
-                <span className="text-slate-600">Collection Efficiency:</span>
-                <span className="font-mono font-bold text-slate-800">{analytics?.metrics?.collectionRatePct || 98.2}%</span>
+                <span className="text-slate-600 font-medium">Collection Efficiency:</span>
+                <span className="font-mono font-bold text-slate-900">{analytics?.metrics?.collectionRatePct || 98.2}%</span>
               </div>
-              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                <div className="bg-emerald-600 h-full rounded-full transition-all" style={{ width: `${analytics?.metrics?.collectionRatePct || 98.2}%` }}></div>
+              <div className="w-full bg-surface-200 h-2 rounded-full overflow-hidden">
+                <div className="bg-brand-600 h-full rounded-full transition-all" style={{ width: `${analytics?.metrics?.collectionRatePct || 98.2}%` }}></div>
               </div>
             </div>
 
             <div className="space-y-2">
               <div className="flex justify-between text-xs">
-                <span className="text-slate-600">Table Loan Liquidity Ratio:</span>
-                <span className="font-mono font-bold text-slate-800">3.4x Covered</span>
+                <span className="text-slate-600 font-medium">Table Loan Liquidity Ratio:</span>
+                <span className="font-mono font-bold text-slate-900">3.4x Covered</span>
               </div>
-              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+              <div className="w-full bg-surface-200 h-2 rounded-full overflow-hidden">
                 <div className="bg-brand-900 h-full rounded-full" style={{ width: '82%' }}></div>
               </div>
             </div>
 
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+            <div className="pt-2 border-t border-surface-200 flex items-center justify-between text-[11px] text-slate-600 font-medium">
               <span>Dual-approval policy enforced</span>
-              <span className="text-emerald-700 font-semibold">Active</span>
+              <span className="text-brand-800 font-bold">Active</span>
             </div>
           </div>
 
