@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import {
-  Activity, ArrowDownLeft, ArrowUpRight, Bell, BookOpen, Bot, Building2,
+  Activity, ArrowDownLeft, ArrowRight, ArrowUpRight, Bell, BookOpen, Bot, Building2,
   CheckCircle2, ChevronDown, CircleHelp, CreditCard, FileSpreadsheet, FileText,
-  Hash, History, LayoutDashboard, Lock, LogOut, MessageSquare, PiggyBank,
+  Globe, Hash, History, LayoutDashboard, Lock, LogOut, MessageSquare, PiggyBank,
   Plus, Receipt, RefreshCw, Repeat, Send, ShieldCheck, Sparkles, Target,
   Trash2, TrendingUp, Undo2, Users, Wallet
 } from 'lucide-react';
