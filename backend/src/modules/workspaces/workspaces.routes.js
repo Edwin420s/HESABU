@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma.js';
 import { AppError, asyncHandler } from '../../shared/errors.js';
+import { jsonSafe } from '../../shared/money.js';
 import { authenticate, requireWorkspaceRole, allowRoles } from '../../middleware/auth.js';
 import { initializeWorkspaceChartOfAccounts } from '../finance/chartOfAccounts.js';
 
@@ -14,7 +15,7 @@ router.get('/', asyncHandler(async (req, res) => {
     include: { workspace: true },
     orderBy: { joinedAt: 'asc' }
   });
-  res.json({ workspaces: memberships.map(m => ({ ...m.workspace, role: m.role })) });
+  res.json({ workspaces: jsonSafe(memberships.map(m => ({ ...m.workspace, role: m.role }))) });
 }));
 
 router.post('/', asyncHandler(async (req, res) => {
@@ -60,7 +61,7 @@ router.post('/', asyncHandler(async (req, res) => {
     }
   });
 
-  res.status(201).json({ workspace });
+  res.status(201).json({ workspace: jsonSafe(workspace) });
 }));
 
 router.get('/:id', requireWorkspaceRole, asyncHandler(async (req, res) => {
@@ -68,7 +69,7 @@ router.get('/:id', requireWorkspaceRole, asyncHandler(async (req, res) => {
     where: { id: req.params.id },
     include: { memberships: { include: { user: { select: { id: true, name: true, email: true } } } } }
   });
-  res.json({ workspace });
+  res.json({ workspace: jsonSafe(workspace) });
 }));
 
 router.post('/:id/members', requireWorkspaceRole, allowRoles('OWNER', 'ADMIN'), asyncHandler(async (req, res) => {
