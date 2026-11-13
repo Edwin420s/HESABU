@@ -44,6 +44,7 @@ export function FxView({ workspaceId, currency, setNotice }) {
         eyebrow="MULTI-CURRENCY TREASURY"
         title="Foreign Exchange & Cross-Border Rates"
         description="Real-time multi-market conversion rates across Kenya Shillings (KES), South African Rand (ZAR), USD, and regional currencies."
+        helpText="Multi-currency Treasury provides institutional FX exchange calculations between African corridors (KES, ZAR, UGX, TZS, NGN, GHS, USD). Spread calculations (0.5%) give you the exact landed cost for cross-border supplier settlements and member remittances."
       />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '14px' }}>

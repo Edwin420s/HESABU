@@ -69,6 +69,7 @@ export function ProcurementView({ workspaceId, currency, setNotice, refresh }) {
         eyebrow="CAPITAL GOVERNANCE"
         title="Procurement & Purchase Requests"
         description="Enforce segregation of duties and dual-authorization spending thresholds prior to purchase commitments."
+        helpText="Procurement ensures organizational capital is safeguarded before commitments are made. Staff submit purchase requests detailing department and estimated cost. Authorized managers approve or reject requests before invoices or vendor orders can proceed."
         action={<button className="primary" onClick={() => setModal(true)}><Plus size={15} /> New Purchase Request</button>}
       />
 

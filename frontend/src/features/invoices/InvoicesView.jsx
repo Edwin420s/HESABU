@@ -162,6 +162,7 @@ export function InvoicesView({ workspaceId, currency, setNotice, refresh }) {
         eyebrow="COMMERCIAL RECEIVABLES"
         title="Invoices & Accounts Receivable"
         description="Issue professional commercial invoices with VAT calculation, allocate partial settlements, issue credit notes, and track customer receivables."
+        helpText="Commercial Invoicing allows your organization to bill external clients or partners. When an invoice is issued, Accounts Receivable is debited and Revenue/Output VAT is credited. Settle invoices via M-Pesa, PayShap, or Bank transfer to clear receivables into Cash accounts."
         action={
           <div style={{ display: 'flex', gap: '8px' }}>
             <button className="secondary" onClick={() => setModal('customer')}><Plus size={15} /> Add Customer</button>

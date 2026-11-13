@@ -23,6 +23,7 @@ export function BudgetVarianceView({ workspaceId, variance, currency }) {
           eyebrow="TREASURY DISCIPLINE"
           title="Budget vs Actual Variance"
           description="Track category allocations, operational spending, and prevent budget overruns."
+          helpText="Budget Variance compares budgeted limits against actual posted expenditures by category. Positive variance indicates available remaining funds; negative variance warns of cost overruns."
         />
         <div style={{ textAlign: 'center', padding: '36px', color: '#7b8780' }}>
           No budget limits configured for this workspace yet.
@@ -37,6 +38,7 @@ export function BudgetVarianceView({ workspaceId, variance, currency }) {
         eyebrow="TREASURY DISCIPLINE"
         title="Budget vs Actual Variance"
         description="Track category allocations, operational spending, and prevent budget overruns."
+        helpText="Budget Variance compares budgeted limits against actual posted expenditures by category. Positive variance indicates available remaining funds; negative variance warns of cost overruns."
       />
       <div className="metric-grid" style={{ marginBottom: '20px' }}>
         <Metric label="Allocated Budget" value={money(variance.totalAllocatedMinor, currency)} icon={<Wallet />} />

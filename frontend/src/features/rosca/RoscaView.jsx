@@ -50,6 +50,7 @@ export function RoscaView({ workspaceId, cycles, refresh, setNotice, currency, m
         eyebrow="COMMUNITY WEALTH ACCUMULATION"
         title="Merry-Go-Round (ROSCA) Circles"
         description="Rotating savings and credit rounds ensuring scheduled, transparent pool disbursements to members."
+        helpText="ROSCA (Merry-Go-Round): Members contribute a fixed amount each round. The combined pool is paid out in rotation to one designated member each period until everyone receives the pot. Each contribution and disbursement automatically posts balanced double-entry ledger entries."
         action={<button className="primary" onClick={() => setModal(true)}><Plus size={16} /> New Merry-Go-Round</button>}
       />
 

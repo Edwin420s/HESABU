@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import {
   Activity, ArrowDownLeft, ArrowRight, ArrowUpRight, Bell, BookOpen, Bot, Building2,
-  CheckCircle2, ChevronDown, CircleHelp, CreditCard, FileSpreadsheet, FileText,
-  Globe, Hash, History, LayoutDashboard, Lock, LogOut, MessageSquare, PiggyBank,
-  Plus, Receipt, RefreshCw, Repeat, Send, ShieldCheck, Sparkles, Target,
+  CheckCircle2, ChevronDown, CircleHelp, Compass, CreditCard, FileSpreadsheet, FileText,
+  Globe, Hash, HelpCircle, History, LayoutDashboard, Lock, LogOut, MessageSquare, PiggyBank,
+  Plus, Receipt, RefreshCw, Repeat, Search, Send, ShieldCheck, Sparkles, Target,
   Trash2, TrendingUp, Undo2, Users, Wallet
 } from 'lucide-react';
 import { api, money, API_URL } from './api';
@@ -143,14 +143,38 @@ function Field({ label, children }) {
   );
 }
 
+const ALL_MODULES = [
+  { id: 'overview', label: 'Overview & Command Center', category: 'core', icon: LayoutDashboard },
+  { id: 'contributions', label: 'Contributions & Obligations', category: 'chama', icon: ArrowDownLeft },
+  { id: 'recurring', label: 'Recurring Dues Schedules', category: 'chama', icon: Repeat },
+  { id: 'campaigns', label: 'Campaigns & Group Goals', category: 'chama', icon: Target },
+  { id: 'rosca', label: 'Merry-Go-Round (ROSCA)', category: 'chama', icon: Repeat },
+  { id: 'loans', label: 'Table Loans & Repayments', category: 'chama', icon: PiggyBank },
+  { id: 'invoices', label: 'Invoices & Accounts Receivable', category: 'commercial', icon: FileText },
+  { id: 'bills', label: 'Supplier Bills & Accounts Payable', category: 'commercial', icon: Receipt },
+  { id: 'procurement', label: 'Procurement & Purchase Requests', category: 'commercial', icon: Building2 },
+  { id: 'expenses', label: 'Expenses & Multi-Member Splits', category: 'commercial', icon: Receipt },
+  { id: 'reimbursements', label: 'Member Reimbursements', category: 'commercial', icon: PiggyBank },
+  { id: 'budgets', label: 'Budget Variance & Utilization', category: 'commercial', icon: Target },
+  { id: 'fx', label: 'FX & Treasury Spreads', category: 'treasury', icon: TrendingUp },
+  { id: 'payments', label: 'Payment Rails (M-Pesa, PayShap, Stellar)', category: 'treasury', icon: CreditCard },
+  { id: 'agent', label: 'Autonomous AI Copilot', category: 'treasury', icon: Bot },
+  { id: 'ledger', label: 'Double-Entry General Ledger', category: 'treasury', icon: BookOpen },
+  { id: 'statements', label: 'Financial Statements (Trial Balance & P&L)', category: 'treasury', icon: FileSpreadsheet },
+  { id: 'anchors', label: 'Statement Anchors (Soroban Merkle)', category: 'treasury', icon: Lock },
+  { id: 'audit', label: 'Audit Trail & Compliance Logs', category: 'treasury', icon: History },
+  { id: 'reports', label: 'Tax Reports & Exports', category: 'treasury', icon: FileText },
+  { id: 'members', label: 'Workspace Members & Roles', category: 'core', icon: Users },
+];
+
 function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hesabu_user')); } catch { return null; }
   });
-  const [viewMode, setViewMode] = useState(() => {
-    const savedUser = localStorage.getItem('hesabu_user');
-    return savedUser ? 'app' : 'landing';
-  });
+  // Default directly into using the product!
+  const [viewMode, setViewMode] = useState('app');
+  const [navFilter, setNavFilter] = useState('all'); // 'all' | 'chama' | 'commercial' | 'treasury'
+  const [searchQuery, setSearchQuery] = useState('');
   const [workspaces, setWorkspaces] = useState([]);
   const [workspaceId, setWorkspaceId] = useState('');
   const [workspace, setWorkspace] = useState(null);
@@ -158,6 +182,25 @@ function App() {
   const [refresh, setRefresh] = useState(0);
   const [notice, setNotice] = useState('');
   const navigate = useNavigate();
+
+  // Seamless auto-login to demo account if no active token
+  useEffect(() => {
+    const token = localStorage.getItem('hesabu_token');
+    if (!token) {
+      api('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: 'demo@hesabu.local', password: 'HesabuDemo!2026' })
+      }).then(res => {
+        localStorage.setItem('hesabu_token', res.token);
+        localStorage.setItem('hesabu_user', JSON.stringify(res.user));
+        setUser(res.user);
+        setViewMode('app');
+        setRefresh(r => r + 1);
+      }).catch(err => {
+        console.error('Auto demo login fallback:', err);
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -182,17 +225,13 @@ function App() {
     navigate('/');
   }
 
-  // If user chose to view the Landing Page or is not yet logged in and viewing landing
+  // If user explicitly chose to view public product landing page
   if (viewMode === 'landing') {
     return (
       <LandingPage
         user={user}
         onEnterApp={() => {
-          if (user) {
-            setViewMode('app');
-          } else {
-            setViewMode('auth');
-          }
+          setViewMode('app');
         }}
         onLoginClick={() => setViewMode('auth')}
       />
@@ -211,6 +250,11 @@ function App() {
     );
   }
 
+  // Filtered search results
+  const filteredShortcuts = searchQuery.trim()
+    ? ALL_MODULES.filter(m => m.label.toLowerCase().includes(searchQuery.toLowerCase()))
+    : [];
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -228,56 +272,106 @@ function App() {
           <ChevronDown size={14} className="text-slate-400" />
         </div>
 
-        <div className="nav-group">
-          <p className="nav-label">Core Operations</p>
-          <nav>
-            <NavButton active={page === 'overview'} onClick={() => setPage('overview')} icon={<LayoutDashboard size={16} />} label="Overview" />
-            <NavButton active={page === 'contributions'} onClick={() => setPage('contributions')} icon={<ArrowDownLeft size={16} />} label="Contributions" />
-            <NavButton active={page === 'recurring'} onClick={() => setPage('recurring')} icon={<Repeat size={16} />} label="Recurring Dues" />
-            <NavButton active={page === 'campaigns'} onClick={() => setPage('campaigns')} icon={<Target size={16} />} label="Campaigns & Goals" />
-          </nav>
+        {/* Workspace Mode Quick Switcher */}
+        <div className="flex bg-slate-100 p-1 rounded-lg mb-4 text-[11px] font-bold">
+          <button
+            type="button"
+            className={`flex-1 py-1 rounded transition text-center ${navFilter === 'all' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}
+            onClick={() => setNavFilter('all')}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            className={`flex-1 py-1 rounded transition text-center ${navFilter === 'chama' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}
+            onClick={() => setNavFilter('chama')}
+            title="Chama & Group Savings"
+          >
+            Chama
+          </button>
+          <button
+            type="button"
+            className={`flex-1 py-1 rounded transition text-center ${navFilter === 'commercial' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}
+            onClick={() => setNavFilter('commercial')}
+            title="Commercial Invoicing & Bills"
+          >
+            Business
+          </button>
+          <button
+            type="button"
+            className={`flex-1 py-1 rounded transition text-center ${navFilter === 'treasury' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}
+            onClick={() => setNavFilter('treasury')}
+            title="Treasury & Ledger"
+          >
+            Ledger
+          </button>
         </div>
 
-        <div className="nav-group">
-          <p className="nav-label">Commercial AP/AR</p>
-          <nav>
-            <NavButton active={page === 'invoices'} onClick={() => setPage('invoices')} icon={<FileText size={16} />} label="Invoices & AR" />
-            <NavButton active={page === 'bills'} onClick={() => setPage('bills')} icon={<Receipt size={16} />} label="Bills & AP" />
-            <NavButton active={page === 'procurement'} onClick={() => setPage('procurement')} icon={<Building2 size={16} />} label="Procurement" />
-            <NavButton active={page === 'expenses'} onClick={() => setPage('expenses')} icon={<Receipt size={16} />} label="Expenses & Splits" />
-            <NavButton active={page === 'reimbursements'} onClick={() => setPage('reimbursements')} icon={<PiggyBank size={16} />} label="Reimbursements" />
-          </nav>
-        </div>
+        {/* Core Operations Group */}
+        {(navFilter === 'all' || navFilter === 'chama') && (
+          <div className="nav-group">
+            <p className="nav-label">Core Operations</p>
+            <nav>
+              <NavButton active={page === 'overview'} onClick={() => setPage('overview')} icon={<LayoutDashboard size={16} />} label="Overview" />
+              <NavButton active={page === 'contributions'} onClick={() => setPage('contributions')} icon={<ArrowDownLeft size={16} />} label="Contributions" />
+              <NavButton active={page === 'recurring'} onClick={() => setPage('recurring')} icon={<Repeat size={16} />} label="Recurring Dues" />
+              <NavButton active={page === 'campaigns'} onClick={() => setPage('campaigns')} icon={<Target size={16} />} label="Campaigns & Goals" />
+            </nav>
+          </div>
+        )}
 
-        <div className="nav-group">
-          <p className="nav-label">Chama & Cooperative</p>
-          <nav>
-            <NavButton active={page === 'rosca'} onClick={() => setPage('rosca')} icon={<Repeat size={16} />} label="Merry-Go-Round" />
-            <NavButton active={page === 'loans'} onClick={() => setPage('loans')} icon={<PiggyBank size={16} />} label="Table Loans" />
-            <NavButton active={page === 'budgets'} onClick={() => setPage('budgets')} icon={<Target size={16} />} label="Budget Variance" />
-          </nav>
-        </div>
+        {/* Commercial AP/AR Group */}
+        {(navFilter === 'all' || navFilter === 'commercial') && (
+          <div className="nav-group">
+            <p className="nav-label">Commercial AP/AR</p>
+            <nav>
+              <NavButton active={page === 'invoices'} onClick={() => setPage('invoices')} icon={<FileText size={16} />} label="Invoices & AR" />
+              <NavButton active={page === 'bills'} onClick={() => setPage('bills')} icon={<Receipt size={16} />} label="Bills & AP" />
+              <NavButton active={page === 'procurement'} onClick={() => setPage('procurement')} icon={<Building2 size={16} />} label="Procurement" />
+              <NavButton active={page === 'expenses'} onClick={() => setPage('expenses')} icon={<Receipt size={16} />} label="Expenses & Splits" />
+              <NavButton active={page === 'reimbursements'} onClick={() => setPage('reimbursements')} icon={<PiggyBank size={16} />} label="Reimbursements" />
+            </nav>
+          </div>
+        )}
 
-        <div className="nav-group">
-          <p className="nav-label">Treasury & Rails</p>
-          <nav>
-            <NavButton active={page === 'fx'} onClick={() => setPage('fx')} icon={<TrendingUp size={16} />} label="FX & Treasury" />
-            <NavButton active={page === 'payments'} onClick={() => setPage('payments')} icon={<CreditCard size={16} />} label="Payments & Rails" />
-            <NavButton active={page === 'agent'} onClick={() => setPage('agent')} icon={<Bot size={16} />} label="Agentic Copilot" />
-          </nav>
-        </div>
+        {/* Chama & Cooperative Group */}
+        {(navFilter === 'all' || navFilter === 'chama') && (
+          <div className="nav-group">
+            <p className="nav-label">Chama & Cooperative</p>
+            <nav>
+              <NavButton active={page === 'rosca'} onClick={() => setPage('rosca')} icon={<Repeat size={16} />} label="Merry-Go-Round" />
+              <NavButton active={page === 'loans'} onClick={() => setPage('loans')} icon={<PiggyBank size={16} />} label="Table Loans" />
+              <NavButton active={page === 'budgets'} onClick={() => setPage('budgets')} icon={<Target size={16} />} label="Budget Variance" />
+            </nav>
+          </div>
+        )}
 
-        <div className="nav-group">
-          <p className="nav-label">Governance & Ledger</p>
-          <nav>
-            <NavButton active={page === 'ledger'} onClick={() => setPage('ledger')} icon={<BookOpen size={16} />} label="Double-Entry Ledger" />
-            <NavButton active={page === 'statements'} onClick={() => setPage('statements')} icon={<FileSpreadsheet size={16} />} label="Financial Statements" />
-            <NavButton active={page === 'anchors'} onClick={() => setPage('anchors')} icon={<Lock size={16} />} label="Statement Anchors" />
-            <NavButton active={page === 'audit'} onClick={() => setPage('audit')} icon={<History size={16} />} label="Audit Trail" />
-            <NavButton active={page === 'reports'} onClick={() => setPage('reports')} icon={<FileText size={16} />} label="Exports & Tax" />
-            <NavButton active={page === 'members'} onClick={() => setPage('members')} icon={<Users size={16} />} label="Members & Access" />
-          </nav>
-        </div>
+        {/* Treasury & Rails Group */}
+        {(navFilter === 'all' || navFilter === 'treasury') && (
+          <div className="nav-group">
+            <p className="nav-label">Treasury & Rails</p>
+            <nav>
+              <NavButton active={page === 'fx'} onClick={() => setPage('fx')} icon={<TrendingUp size={16} />} label="FX & Treasury" />
+              <NavButton active={page === 'payments'} onClick={() => setPage('payments')} icon={<CreditCard size={16} />} label="Payments & Rails" />
+              <NavButton active={page === 'agent'} onClick={() => setPage('agent')} icon={<Bot size={16} />} label="Agentic Copilot" />
+            </nav>
+          </div>
+        )}
+
+        {/* Governance & Ledger Group */}
+        {(navFilter === 'all' || navFilter === 'treasury') && (
+          <div className="nav-group">
+            <p className="nav-label">Governance & Ledger</p>
+            <nav>
+              <NavButton active={page === 'ledger'} onClick={() => setPage('ledger')} icon={<BookOpen size={16} />} label="Double-Entry Ledger" />
+              <NavButton active={page === 'statements'} onClick={() => setPage('statements')} icon={<FileSpreadsheet size={16} />} label="Financial Statements" />
+              <NavButton active={page === 'anchors'} onClick={() => setPage('anchors')} icon={<Lock size={16} />} label="Statement Anchors" />
+              <NavButton active={page === 'audit'} onClick={() => setPage('audit')} icon={<History size={16} />} label="Audit Trail" />
+              <NavButton active={page === 'reports'} onClick={() => setPage('reports')} icon={<FileText size={16} />} label="Exports & Tax" />
+              <NavButton active={page === 'members'} onClick={() => setPage('members')} icon={<Users size={16} />} label="Members & Access" />
+            </nav>
+          </div>
+        )}
 
         <div className="sidebar-bottom">
           <button className="tour-link full" onClick={() => setViewMode('landing')}>
@@ -305,6 +399,45 @@ function App() {
             <span className="breadcrumb">Workspace</span>
             <span className="slash">/</span>
             <span className="breadcrumb-active">{page.replace('-', ' ')}</span>
+          </div>
+
+          {/* Quick Jump Search Input */}
+          <div className="relative flex-1 max-w-sm mx-4">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search or jump to module (e.g. loans, invoices, rosca)..."
+              className="w-full text-xs pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-500 transition"
+            />
+            <Search size={14} className="absolute left-2.5 top-2 text-slate-400" />
+
+            {/* Instant Filtered Search Dropdown */}
+            {searchQuery.trim() && (
+              <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
+                {filteredShortcuts.length === 0 ? (
+                  <div className="p-3 text-xs text-slate-400 text-center">No matching modules found</div>
+                ) : (
+                  filteredShortcuts.map(m => {
+                    const IconComp = m.icon;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        className="w-full px-3 py-2 text-left text-xs font-semibold hover:bg-emerald-50 hover:text-emerald-800 flex items-center gap-2 border-b border-slate-50 last:border-0"
+                        onClick={() => {
+                          setPage(m.id);
+                          setSearchQuery('');
+                        }}
+                      >
+                        <IconComp size={14} className="text-slate-400" />
+                        <span>{m.label}</span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
 
           <div className="top-actions">
@@ -347,7 +480,7 @@ function App() {
             <EmptyWorkspace onCreated={() => setRefresh(v => v + 1)} />
           ) : (
             <Routes>
-              <Route path="*" element={<WorkspacePage page={page} workspace={workspace} workspaceId={workspaceId} refresh={() => setRefresh(v => v + 1)} setNotice={setNotice} />} />
+              <Route path="*" element={<WorkspacePage page={page} setPage={setPage} workspace={workspace} workspaceId={workspaceId} refresh={() => setRefresh(v => v + 1)} setNotice={setNotice} />} />
             </Routes>
           )}
         </div>
@@ -365,20 +498,38 @@ function NavButton({ active, onClick, icon, label }) {
   );
 }
 
-function PageHeader({ eyebrow, title, description, action }) {
+function PageHeader({ eyebrow, title, description, action, helpText }) {
+  const [showHelp, setShowHelp] = useState(false);
   return (
     <div className="page-header">
       <div>
-        <p className="eyebrow">{eyebrow}</p>
+        <div className="flex items-center gap-2">
+          {eyebrow && <p className="eyebrow">{eyebrow}</p>}
+          {helpText && (
+            <button
+              type="button"
+              className="text-[10px] text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 mb-1.5"
+              onClick={() => setShowHelp(!showHelp)}
+            >
+              <HelpCircle size={11} />
+              <span>{showHelp ? 'Hide guide' : 'What is this?'}</span>
+            </button>
+          )}
+        </div>
         <h1>{title}</h1>
         <p className="subtle">{description}</p>
+        {showHelp && helpText && (
+          <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-lg text-xs text-emerald-900 mt-2.5 leading-relaxed">
+            💡 {helpText}
+          </div>
+        )}
       </div>
       {action}
     </div>
   );
 }
 
-function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
+function WorkspacePage({ page, setPage, workspace, workspaceId, refresh, setNotice }) {
   const [data, setData] = useState({
     summary: null,
     obligations: [],
@@ -498,7 +649,12 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           reimbursements={data.reimbursements}
           agent={data.agent}
           analytics={data.analytics}
+          rosca={data.rosca}
+          loans={data.loans}
+          journal={data.journal}
+          anchors={data.anchors}
           setModal={setModal}
+          setPage={setPage}
         />
         {modalUI}
       </>
@@ -511,6 +667,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="COLLECTIONS"
           title="Contributions & Obligations"
           description="Track member contribution obligations, payment attempts, and verified settlements."
+          helpText="Contributions represent dues and commitments owed to the group. Initiating a payment triggers an M-Pesa STK push or PayShap request. Once external settlement succeeds, double-entry journal entries post automatically."
           action={<button className="primary" onClick={() => setModal('obligation')}><Plus size={16} /> New obligation</button>}
         />
         <ObligationTable rows={data.obligations} currency={currency} onPay={setPayModal} refresh={refresh} setNotice={setNotice} />
@@ -535,6 +692,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="TARGETED FUNDRAISING"
           title="Campaigns & Group Goals"
           description="Crowdfund specific projects, asset purchases, emergencies, or community initiatives."
+          helpText="Campaigns track dedicated fundraising goals (e.g. equipment purchases, land investments, emergency funds). Contributions can be pledged and monitored against target deadlines."
           action={<button className="primary" onClick={() => setModal('campaign')}><Plus size={16} /> New Campaign</button>}
         />
         <CampaignsHub campaigns={data.campaigns} currency={currency} onAddContribution={c => { setCampaignModal(c); setModal('obligation'); }} />
@@ -549,6 +707,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="SPENDING"
           title="Expenses & Multi-Member Splits"
           description="Submit costs, review approvals with separation of duties, and execute payouts."
+          helpText="Track operational spending. In accordance with segregation of duties, the creator cannot self-approve. Approved expenses post journal entries debiting Expense and crediting Accounts Payable or Cash."
           action={<button className="primary" onClick={() => setModal('expense')}><Plus size={16} /> Add expense</button>}
         />
         <ExpenseTable rows={data.expenses} currency={currency} refresh={refresh} setNotice={setNotice} />
@@ -563,6 +722,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="OUT-OF-POCKET EXPENSES"
           title="Member Reimbursements"
           description="Review out-of-pocket claims from members and disburse payouts directly to their verified accounts."
+          helpText="Members who paid out of pocket submit claims with expense receipts. Authorized finance officers approve and disburse payouts directly to the member's account."
           action={<button className="primary" onClick={() => setModal('reimbursement')}><Plus size={16} /> Submit Claim</button>}
         />
         <ReimbursementsView reimbursements={data.reimbursements} currency={currency} refresh={refresh} setNotice={setNotice} />
@@ -577,6 +737,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="AUTOMATED RECURRENCE"
           title="Recurring Dues Schedules"
           description="Configure weekly, monthly, or quarterly dues cycles that automatically bill all members."
+          helpText="Set up automatic billing schedules (monthly, weekly) that generate obligations for all active members simultaneously, eliminating manual invoicing."
           action={<button className="primary" onClick={() => setModal('recurring')}><Plus size={16} /> New Schedule</button>}
         />
         <RecurringDuesView schedules={data.recurring} currency={currency} refresh={refresh} setNotice={setNotice} />
@@ -603,6 +764,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="MONEY MOVEMENT"
           title="Payment Transactions"
           description="Payment attempts remain pending until independently verified on Stellar Horizon or Safaricom M-Pesa."
+          helpText="Live transaction stream across Safaricom M-Pesa, PayShap EFT, and Stellar blockchain. Transactions only confirm when the provider returns a verified cryptographic or gateway callback."
         />
         <FxConverterCard />
         <PaymentTable rows={data.payments} currency={currency} refresh={refresh} setNotice={setNotice} />
@@ -616,6 +778,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="AGENTIC COGNITION"
           title="Autonomous Financial Copilot"
           description="Interactive AI agent providing live cashflow analysis, reconciliation checks, and natural-language queries."
+          helpText="Interactive AI Copilot analyzing live ledger balances, payment reconciliations, and member dues. Ask any question in plain English or Swahili."
         />
         <AgentCopilotView workspaceId={workspaceId} insights={data.agent} currency={currency} />
       </>
@@ -628,6 +791,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="ACCOUNTING CORE"
           title="Double-Entry Journal"
           description="Immutable, balanced journal entries posted upon external settlement verification."
+          helpText="Double-entry journal. Every settlement, fee, loan disbursement, and expense generates equal debits and credits. No entries can be edited or deleted; only reversals are permitted."
         />
         <LedgerView entries={data.journal} currency={currency} refresh={refresh} setNotice={setNotice} />
       </>
@@ -640,6 +804,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="FINANCIAL REPORTING"
           title="Trial Balance & Income Statement"
           description="Real-time mathematical verification of double-entry ledger equality and operational performance."
+          helpText="Trial Balance mathematically verifies that total debits equal total credits across all accounts. Income Statement measures operational revenues against expenditures."
         />
         <FinancialStatementsView trialBalance={data.trialBalance} incomeStatement={data.incomeStatement} currency={currency} />
       </>
@@ -652,6 +817,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="CRYPTOGRAPHIC AUDITABILITY"
           title="Statement Anchors (Merkle Roots)"
           description="Canonical SHA-256 Merkle root fingerprints of financial periods for tamper-proof verification."
+          helpText="Statement Anchors calculate SHA-256 Merkle root trees of financial statements and anchor them to the Soroban smart contract, proving data immutability to external auditors."
           action={<button className="primary" onClick={() => setModal('anchor')}><Plus size={16} /> Generate Anchor</button>}
         />
         <AnchorsView anchors={data.anchors} currency={currency} />
@@ -667,6 +833,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
           eyebrow="SECURITY & GOVERNANCE"
           title="Audit Trail"
           description="Complete immutable history of administrative, financial, and security actions."
+          helpText="Comprehensive audit trail recording all administrative logins, workspace modifications, approval decisions, and security events with timestamps and IP addresses."
         />
         <AuditView logs={data.auditLogs} workspaceId={workspaceId} />
       </>
@@ -677,7 +844,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
   return null;
 }
 
-function Overview({ workspace, summary, obligations, campaigns, expenses, reimbursements, agent, analytics, setModal }) {
+function Overview({ workspace, summary, obligations = [], campaigns = [], expenses = [], reimbursements = [], agent, analytics, rosca = [], loans = [], journal = [], anchors = [], setModal, setPage }) {
   const currency = workspace?.currency || 'KES';
   const pendingReimb = reimbursements?.filter(r => r.status === 'SUBMITTED')?.length || 0;
   const activeCampaigns = campaigns?.filter(c => c.status === 'ACTIVE')?.length || 0;
@@ -685,16 +852,156 @@ function Overview({ workspace, summary, obligations, campaigns, expenses, reimbu
   return (
     <>
       <PageHeader
-        eyebrow="ENTERPRISE FINANCIAL DASHBOARD"
+        eyebrow="FINANCIAL COMMAND CENTER"
         title="Good work starts with financial clarity."
         description={`${workspace?.name || 'Your workspace'} · Collaborative financial operations, multi-rail settlements, and double-entry rigor.`}
-        action={<button className="primary" onClick={() => setModal('obligation')}><Plus size={16} /> New obligation</button>}
+        helpText="HESABU unifies member dues, commercial invoicing, ROSCA Merry-Go-Rounds, table banking loans, and automated double-entry ledger bookkeeping. Transactions settle across M-Pesa, PayShap, and Stellar with cryptographic Merkle tree anchoring."
+        action={
+          <div className="flex items-center gap-2">
+            <button className="secondary" onClick={() => setPage('invoices')}>
+              <FileText size={15} /> Issue Invoice
+            </button>
+            <button className="primary" onClick={() => setModal('obligation')}>
+              <Plus size={15} /> New obligation
+            </button>
+          </div>
+        }
       />
+
+      <div className="quick-action-bar">
+        <button className="action-pill primary-pill" onClick={() => setModal('obligation')}>
+          <Plus size={14} />
+          <span>+ Record Dues</span>
+        </button>
+        <button className="action-pill" onClick={() => setPage('invoices')}>
+          <FileText size={14} className="text-blue-600" />
+          <span>🧾 Issue Invoice</span>
+        </button>
+        <button className="action-pill" onClick={() => setPage('rosca')}>
+          <Repeat size={14} className="text-purple-600" />
+          <span>🔄 Merry-Go-Round</span>
+        </button>
+        <button className="action-pill" onClick={() => setPage('loans')}>
+          <PiggyBank size={14} className="text-emerald-700" />
+          <span>💰 Table Loans</span>
+        </button>
+        <button className="action-pill" onClick={() => setPage('agent')}>
+          <Bot size={14} className="text-indigo-600" />
+          <span>🤖 Ask Copilot</span>
+        </button>
+        <button className="action-pill" onClick={() => setPage('ledger')}>
+          <BookOpen size={14} className="text-slate-700" />
+          <span>⚖️ General Ledger</span>
+        </button>
+      </div>
+
+      <div className="workflow-pipeline">
+        <div className="pipeline-header">
+          <h3>
+            <Sparkles size={14} className="text-emerald-600" />
+            <span>Interactive Money Pipeline & Operational Lifecycle</span>
+          </h3>
+          <span className="text-xs text-slate-500 font-medium">Click any stage to navigate</span>
+        </div>
+        <div className="pipeline-steps">
+          <div className="pipeline-step" onClick={() => setPage('contributions')}>
+            <div className="pipeline-step-num">STAGE 01</div>
+            <div className="pipeline-step-title">Obligations & Dues</div>
+            <div className="pipeline-step-desc">Track member dues, invoices, and payment requests</div>
+          </div>
+          <div className="pipeline-step" onClick={() => setPage('payments')}>
+            <div className="pipeline-step-num">STAGE 02</div>
+            <div className="pipeline-step-title">Multi-Rail Settlement</div>
+            <div className="pipeline-step-desc">M-Pesa STK Push, PayShap EFT, and Stellar crypto</div>
+          </div>
+          <div className="pipeline-step" onClick={() => setPage('ledger')}>
+            <div className="pipeline-step-num">STAGE 03</div>
+            <div className="pipeline-step-title">Double-Entry Journal</div>
+            <div className="pipeline-step-desc">Automatic posting of balanced debits and credits</div>
+          </div>
+          <div className="pipeline-step" onClick={() => setPage('anchors')}>
+            <div className="pipeline-step-num">STAGE 04</div>
+            <div className="pipeline-step-title">Cryptographic Anchor</div>
+            <div className="pipeline-step-desc">Soroban smart contract Merkle root verification</div>
+          </div>
+        </div>
+      </div>
+
       <div className="metric-grid">
         <Metric label="Expected contributions" value={money(summary?.obligationsMinor, currency)} icon={<Wallet />} tone="green" />
         <Metric label="Confirmed received" value={money(summary?.receivedMinor, currency)} icon={<ArrowDownLeft />} />
         <Metric label="Outstanding balance" value={money(summary?.outstandingMinor, currency)} icon={<Activity />} tone="amber" />
         <Metric label="Approved expenses" value={money(summary?.approvedExpensesMinor, currency)} icon={<ArrowUpRight />} />
+      </div>
+
+      <div className="jump-cards-grid">
+        <div className="jump-card" onClick={() => setPage('rosca')}>
+          <div>
+            <div className="jump-card-top">
+              <div className="jump-card-icon purple">
+                <Repeat size={16} />
+              </div>
+              <span className="status status-settled">{rosca?.length || 0} Cycles</span>
+            </div>
+            <h4>Merry-Go-Round</h4>
+            <p>Rotating Chama pool savings with scheduled round payouts and double-entry tracking.</p>
+          </div>
+          <div className="jump-card-action">
+            <span>Open Rosca Circles</span>
+            <ArrowRight size={12} />
+          </div>
+        </div>
+
+        <div className="jump-card" onClick={() => setPage('loans')}>
+          <div>
+            <div className="jump-card-top">
+              <div className="jump-card-icon">
+                <PiggyBank size={16} />
+              </div>
+              <span className="status status-settled">{loans?.length || 0} Loans</span>
+            </div>
+            <h4>Table Banking & Loans</h4>
+            <p>Internal peer micro-loans with interest amortization schedules and installment ledgering.</p>
+          </div>
+          <div className="jump-card-action">
+            <span>Open Loan Book</span>
+            <ArrowRight size={12} />
+          </div>
+        </div>
+
+        <div className="jump-card" onClick={() => setPage('invoices')}>
+          <div>
+            <div className="jump-card-top">
+              <div className="jump-card-icon blue">
+                <FileText size={16} />
+              </div>
+              <span className="status status-draft">B2B & Commercial</span>
+            </div>
+            <h4>Invoicing & VAT</h4>
+            <p>Issue professional tax invoices, allocate multi-rail settlements, and manage AR/AP.</p>
+          </div>
+          <div className="jump-card-action">
+            <span>Manage Invoices</span>
+            <ArrowRight size={12} />
+          </div>
+        </div>
+
+        <div className="jump-card" onClick={() => setPage('ledger')}>
+          <div>
+            <div className="jump-card-top">
+              <div className="jump-card-icon amber">
+                <BookOpen size={16} />
+              </div>
+              <span className="status status-healthy">{journal?.length || 0} Entries</span>
+            </div>
+            <h4>General Ledger</h4>
+            <p>Full chart of accounts, mathematically guaranteed debits = credits, and statement exports.</p>
+          </div>
+          <div className="jump-card-action">
+            <span>Inspect Ledger</span>
+            <ArrowRight size={12} />
+          </div>
+        </div>
       </div>
 
       {analytics && (
@@ -720,17 +1027,17 @@ function Overview({ workspace, summary, obligations, campaigns, expenses, reimbu
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '20px' }}>
-        <div className="metric-card" style={{ padding: '14px 18px' }}>
+        <div className="metric-card" style={{ padding: '14px 18px', cursor: 'pointer' }} onClick={() => setPage('campaigns')}>
           <p style={{ margin: '0 0 4px', fontSize: '11px', color: '#7b8780' }}>Active Campaigns</p>
           <strong style={{ fontSize: '18px' }}>{activeCampaigns} Goals</strong>
           <small>{campaigns?.length || 0} total campaigns created</small>
         </div>
-        <div className="metric-card" style={{ padding: '14px 18px' }}>
+        <div className="metric-card" style={{ padding: '14px 18px', cursor: 'pointer' }} onClick={() => setPage('reimbursements')}>
           <p style={{ margin: '0 0 4px', fontSize: '11px', color: '#7b8780' }}>Pending Reimbursements</p>
           <strong style={{ fontSize: '18px' }}>{pendingReimb} Claims</strong>
           <small>Awaiting approver review</small>
         </div>
-        <div className="metric-card" style={{ padding: '14px 18px' }}>
+        <div className="metric-card" style={{ padding: '14px 18px', cursor: 'pointer' }} onClick={() => setPage('payments')}>
           <p style={{ margin: '0 0 4px', fontSize: '11px', color: '#7b8780' }}>Settlement Rails</p>
           <strong style={{ fontSize: '18px' }}>Stellar + M-Pesa</strong>
           <small>Direct on-chain & mobile money</small>
@@ -741,7 +1048,16 @@ function Overview({ workspace, summary, obligations, campaigns, expenses, reimbu
         <div className="agent-banner">
           <div className="agent-banner-header">
             <div className="agent-tag"><Sparkles size={14} /> Autonomous Reconciliation Agent</div>
-            <span className={`status status-${agent.reconciliationHealth.toLowerCase()}`}>{agent.reconciliationHealth}</span>
+            <div className="flex items-center gap-2">
+              <span className={`status status-${agent.reconciliationHealth.toLowerCase()}`}>{agent.reconciliationHealth}</span>
+              <button
+                className="text-xs bg-white text-emerald-800 font-bold px-3 py-1 rounded-md border border-emerald-300 hover:bg-emerald-50 flex items-center gap-1 transition cursor-pointer"
+                onClick={() => setPage('agent')}
+              >
+                <span>Ask Copilot</span>
+                <ArrowRight size={11} />
+              </button>
+            </div>
           </div>
           <p>
             {agent.actionItems.length === 0
@@ -758,7 +1074,9 @@ function Overview({ workspace, summary, obligations, campaigns, expenses, reimbu
               <h2>Recent obligations</h2>
               <p>Contribution items in this workspace</p>
             </div>
-            <span className="quiet-tag">{obligations.length} records</span>
+            <button className="text-xs font-semibold text-emerald-700 hover:underline cursor-pointer" onClick={() => setPage('contributions')}>
+              View all ({obligations.length}) →
+            </button>
           </div>
           <ObligationTable rows={obligations.slice(0, 5)} currency={currency} compact />
         </section>
@@ -769,7 +1087,9 @@ function Overview({ workspace, summary, obligations, campaigns, expenses, reimbu
               <h2>Expense activity</h2>
               <p>Recently submitted costs</p>
             </div>
-            <Receipt size={18} className="muted-icon" />
+            <button className="text-xs font-semibold text-emerald-700 hover:underline cursor-pointer" onClick={() => setPage('expenses')}>
+              View all ({expenses.length}) →
+            </button>
           </div>
           <ExpenseTable rows={expenses.slice(0, 5)} currency={currency} compact />
         </section>

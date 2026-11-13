@@ -118,6 +118,7 @@ export function BillsView({ workspaceId, currency, setNotice, refresh }) {
         eyebrow="COMMERCIAL PAYABLES"
         title="Supplier Bills & Accounts Payable"
         description="Record vendor obligations, enforce dual approval limits, and disburse bank EFT or PayShap payouts."
+        helpText="Accounts Payable manages liabilities owed to external suppliers. Bills over the workspace threshold require dual approvals (separation of duties). Marking a bill paid records a disbursement in the cash ledger and settles the vendor liability."
         action={
           <div style={{ display: 'flex', gap: '8px' }}>
             <button className="secondary" onClick={() => setModal('supplier')}><Plus size={15} /> Add Supplier</button>

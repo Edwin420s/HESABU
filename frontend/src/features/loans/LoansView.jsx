@@ -42,6 +42,7 @@ export function LoansView({ workspaceId, loans, refresh, setNotice, currency }) 
         eyebrow="CREDIT & CAPITAL"
         title="Table Banking Loans"
         description="Internal peer lending, interest amortization schedules, and member repayments."
+        helpText="Table Banking allows members to borrow against collective capital pools with customizable interest rates and monthly amortization. Disbursements credit the member's account, and repayments automatically allocate across principal and interest receivables in the general ledger."
         action={<button className="primary" onClick={() => setModal(true)}><Plus size={16} /> Request Loan</button>}
       />
 
