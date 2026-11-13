@@ -465,14 +465,35 @@ function App() {
   useEffect(() => {
     if (!user) return;
     api('/workspaces').then(r => {
-      setWorkspaces(r.workspaces || []);
-      if (!workspaceId && r.workspaces?.[0]) setWorkspaceId(r.workspaces[0].id);
-    }).catch(e => setNotice(e.message));
+      const list = r.workspaces || [];
+      setWorkspaces(list);
+      // Validate that the active workspaceId is in the user's workspace list
+      if (!workspaceId || !list.some(w => w.id === workspaceId)) {
+        if (list[0]?.id) setWorkspaceId(list[0].id);
+      }
+    }).catch(e => {
+      if (e.status === 401) logout();
+      else setNotice(e.message);
+    });
   }, [user, refresh]);
 
   useEffect(() => {
-    if (!workspaceId) return;
-    api(`/workspaces/${workspaceId}`).then(r => setWorkspace(r.workspace)).catch(e => setNotice(e.message));
+    if (!workspaceId) {
+      setWorkspace(null);
+      return;
+    }
+    api(`/workspaces/${workspaceId}`).then(r => setWorkspace(r.workspace)).catch(e => {
+      if (e.status === 403 || e.status === 404) {
+        // Workspace access denied or workspace deleted; fallback to user's first valid workspace
+        api('/workspaces').then(r => {
+          const list = r.workspaces || [];
+          setWorkspaces(list);
+          setWorkspaceId(list[0]?.id || '');
+        }).catch(() => {});
+      } else {
+        setNotice(e.message);
+      }
+    });
   }, [workspaceId, refresh]);
 
   function logout() {
@@ -480,6 +501,7 @@ function App() {
     localStorage.removeItem('hesabu_user');
     setUser(null);
     setWorkspaces([]);
+    setWorkspaceId('');
     setWorkspace(null);
     setViewMode('landing');
     navigate('/');
@@ -867,17 +889,18 @@ function WorkspacePage({ page, setPage, workspace, workspaceId, refresh, setNoti
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (!workspaceId) return;
     Promise.all([
       api(`/workspaces/${workspaceId}/dashboard`),
-      api(`/workspaces/${workspaceId}/obligations`),
+      api(`/workspaces/${workspaceId}/obligations`).catch(() => ({ obligations: [] })),
       api(`/workspaces/${workspaceId}/campaigns`).catch(() => ({ campaigns: [] })),
-      api(`/workspaces/${workspaceId}/expenses`),
+      api(`/workspaces/${workspaceId}/expenses`).catch(() => ({ expenses: [] })),
       api(`/workspaces/${workspaceId}/reimbursements`).catch(() => ({ reimbursements: [] })),
       api(`/workspaces/${workspaceId}/recurring`).catch(() => ({ schedules: [] })),
-      api(`/workspaces/${workspaceId}/payments`),
-      api(`/workspaces/${workspaceId}/agent/reconcile`),
-      api(`/workspaces/${workspaceId}/journal`),
-      api(`/workspaces/${workspaceId}/audit`),
+      api(`/workspaces/${workspaceId}/payments`).catch(() => ({ payments: [] })),
+      api(`/workspaces/${workspaceId}/agent/reconcile`).catch(() => ({ insights: null })),
+      api(`/workspaces/${workspaceId}/journal`).catch(() => ({ entries: [] })),
+      api(`/workspaces/${workspaceId}/audit`).catch(() => ({ auditLogs: [] })),
       api(`/workspaces/${workspaceId}/anchors`).catch(() => ({ anchors: [] })),
       api(`/workspaces/${workspaceId}/reports/trial-balance`).catch(() => null),
       api(`/workspaces/${workspaceId}/reports/income-statement`).catch(() => null),
@@ -887,25 +910,28 @@ function WorkspacePage({ page, setPage, workspace, workspaceId, refresh, setNoti
       api(`/workspaces/${workspaceId}/budgets/variance`).catch(() => null),
       api(`/workspaces/${workspaceId}/accounts`).catch(() => ({ accounts: [] }))
     ]).then(([d, o, c, e, r, rec, p, a, j, au, anc, tb, is, an, ro, lo, va, acc]) => setData({
-      summary: d.summary,
-      obligations: o.obligations,
-      campaigns: c.campaigns || [],
-      expenses: e.expenses,
-      reimbursements: r.reimbursements || [],
-      recurring: rec.schedules || [],
-      payments: p.payments,
-      agent: a.insights,
-      journal: j.entries,
-      auditLogs: au.auditLogs,
-      anchors: anc.anchors || [],
+      summary: d?.summary,
+      obligations: o?.obligations || [],
+      campaigns: c?.campaigns || [],
+      expenses: e?.expenses || [],
+      reimbursements: r?.reimbursements || [],
+      recurring: rec?.schedules || [],
+      payments: p?.payments || [],
+      agent: a?.insights || null,
+      journal: j?.entries || [],
+      auditLogs: au?.auditLogs || [],
+      anchors: anc?.anchors || [],
       trialBalance: tb,
       incomeStatement: is,
       analytics: an,
-      rosca: ro.cycles || [],
-      loans: lo.loans || [],
+      rosca: ro?.cycles || [],
+      loans: lo?.loans || [],
       variance: va,
-      accounts: acc.accounts || []
-    })).catch(err => setNotice(err.message));
+      accounts: acc?.accounts || []
+    })).catch(err => {
+      if (err.status === 403) refresh();
+      setNotice(err.message);
+    });
   }, [workspaceId, refresh]);
 
   async function create(kind, form) {
@@ -1169,22 +1195,31 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
   const pendingReimb = reimbursements?.filter(r => r.status === 'SUBMITTED')?.length || 0;
   const activeCampaigns = campaigns?.filter(c => c.status === 'ACTIVE')?.length || 0;
 
+  // Accountability calculations
+  const targetMinor = obligations.reduce((sum, o) => sum + BigInt(o.amountMinor || 0), 0n);
+  const confirmedMinor = BigInt(summary?.receivedMinor || 0);
+  const pendingPayments = payments.filter(p => p.status === 'PENDING');
+  const pendingMinor = pendingPayments.reduce((sum, p) => sum + BigInt(p.amountMinor || 0), 0n);
+  const outstandingMinor = targetMinor > confirmedMinor ? targetMinor - confirmedMinor : 0n;
+  const collectionPct = targetMinor > 0n ? Math.round(Number((confirmedMinor * 100n) / targetMinor)) : 0;
+  const pendingPct = targetMinor > 0n ? Math.round(Number((pendingMinor * 100n) / targetMinor)) : 0;
+
   return (
     <div className="space-y-6">
-      {/* Top Operational Hero Card from HESABU 2.0 Design */}
+      {/* Top Operational Hero: Shared Financial Accountability */}
       <div className="bg-gradient-to-r from-brand-950 via-brand-900 to-brand-950 rounded-xl p-6 text-white border border-brand-800/80 shadow-lg relative overflow-hidden">
         <div className="absolute -right-8 -bottom-10 w-72 h-72 bg-brand-500/10 rounded-full blur-3xl pointer-events-none"></div>
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-brand-500/20 text-emerald-300 text-[11px] font-mono font-semibold border border-brand-500/30">
               <span className="w-2 h-2 rounded-full bg-brand-500 animate-pulse"></span>
-              MULTI-TENANT TREASURY ACTIVE
+              ONE GROUP • ONE FINANCIAL TRUTH
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight font-sans">
-              Collaborative Treasury & Financial Operations
+              Shared Financial Accountability
             </h1>
             <p className="text-sm text-emerald-200/80 leading-relaxed">
-              Operating under strict double-entry ledger invariants. Reconciling Safaricom M-Pesa C2B/B2C, South African PayShap EFT, and Stellar Horizon USDC rails into verifiable audit statements.
+              Eliminate scattered WhatsApp receipts, notebooks, and conflicting spreadsheets. Track what was expected, what arrived via provider-confirmed rails, who authorized spending, and real-time reconciled funds.
             </p>
           </div>
 
@@ -1195,25 +1230,28 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
               className="bg-brand-500 hover:bg-brand-400 text-brand-950 font-bold px-3.5 py-2 rounded-lg text-xs transition flex items-center gap-1.5 shadow cursor-pointer"
             >
               <Plus size={15} />
-              <span>+ Record Dues</span>
+              <span>+ Establish Dues</span>
             </button>
             <button
-              onClick={() => setPage('invoices')}
+              onClick={() => setModal('expense')}
               className="bg-brand-800 hover:bg-brand-700 text-white font-medium px-3.5 py-2 rounded-lg text-xs transition border border-brand-700 flex items-center gap-1.5 cursor-pointer"
             >
-              <span>🧾 Issue Tax Invoice</span>
+              <Receipt size={14} />
+              <span>Request Spending</span>
             </button>
             <button
-              onClick={() => setPage('rosca')}
+              onClick={() => setModal('campaign')}
               className="bg-brand-800 hover:bg-brand-700 text-white font-medium px-3.5 py-2 rounded-lg text-xs transition border border-brand-700 flex items-center gap-1.5 cursor-pointer"
             >
-              <span>🔄 Merry-Go-Round</span>
+              <Target size={14} />
+              <span>Group Campaign</span>
             </button>
             <button
               onClick={() => setPage('agent')}
               className="bg-brand-800 hover:bg-brand-700 text-emerald-200 font-medium px-3.5 py-2 rounded-lg text-xs transition border border-brand-700/80 flex items-center gap-1.5 cursor-pointer"
             >
-              <span>🤖 Query Copilot</span>
+              <Bot size={14} />
+              <span>Audit Copilot</span>
             </button>
           </div>
         </div>
@@ -1222,23 +1260,75 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
         <div className="mt-6 pt-5 border-t border-brand-800/80 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
           <div onClick={() => setPage('contributions')} className="cursor-pointer bg-brand-900/60 hover:bg-brand-800/80 p-3 rounded-lg border border-brand-700/50 transition">
             <span className="text-[10px] font-mono text-emerald-400 font-bold">STAGE 01</span>
-            <div className="font-bold text-white mt-0.5">Obligations & Dues</div>
-            <div className="text-[11px] text-emerald-200/60">Generate member dues & AR invoices</div>
+            <div className="font-bold text-white mt-0.5">Group Obligations</div>
+            <div className="text-[11px] text-emerald-200/60">What members committed to pay</div>
           </div>
           <div onClick={() => setPage('payments')} className="cursor-pointer bg-brand-900/60 hover:bg-brand-800/80 p-3 rounded-lg border border-brand-700/50 transition">
             <span className="text-[10px] font-mono text-emerald-400 font-bold">STAGE 02</span>
-            <div className="font-bold text-white mt-0.5">Multi-Rail Settlement</div>
-            <div className="text-[11px] text-emerald-200/60">M-Pesa STK, PayShap, Stellar USDC</div>
+            <div className="font-bold text-white mt-0.5">Verified Collections</div>
+            <div className="text-[11px] text-emerald-200/60">Provider-confirmed money movement</div>
+          </div>
+          <div onClick={() => setPage('expenses')} className="cursor-pointer bg-brand-900/60 hover:bg-brand-800/80 p-3 rounded-lg border border-brand-700/50 transition">
+            <span className="text-[10px] font-mono text-emerald-400 font-bold">STAGE 03</span>
+            <div className="font-bold text-white mt-0.5">Spending Approvals</div>
+            <div className="text-[11px] text-emerald-200/60">Dual-officer authorized outflows</div>
           </div>
           <div onClick={() => setPage('ledger')} className="cursor-pointer bg-brand-900/60 hover:bg-brand-800/80 p-3 rounded-lg border border-brand-700/50 transition">
-            <span className="text-[10px] font-mono text-emerald-400 font-bold">STAGE 03</span>
-            <div className="font-bold text-white mt-0.5">Double-Entry Journal</div>
-            <div className="text-[11px] text-emerald-200/60">Atomic GAAP posting: debits = credits</div>
-          </div>
-          <div onClick={() => setPage('anchors')} className="cursor-pointer bg-brand-900/60 hover:bg-brand-800/80 p-3 rounded-lg border border-brand-700/50 transition">
             <span className="text-[10px] font-mono text-emerald-400 font-bold">STAGE 04</span>
-            <div className="font-bold text-white mt-0.5">Cryptographic Anchor</div>
-            <div className="text-[11px] text-emerald-200/60">Soroban contract Merkle root proof</div>
+            <div className="font-bold text-white mt-0.5">Shared Reconciliation</div>
+            <div className="text-[11px] text-emerald-200/60">Dispute-free single source of truth</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Live Group Payment Accountability & Reconciliation Bar */}
+      <div className="bg-surface-50 rounded-xl p-5 border border-surface-300 shadow-[0_1px_3px_rgba(15,23,20,0.04)]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-extrabold tracking-wider text-slate-900 uppercase font-sans">
+                GROUP PAYMENT ACCOUNTABILITY & VERIFICATION
+              </span>
+              <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
+                LIVE STATUS
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 mt-0.5">
+              Verified collections matched against member commitments and authorized spending.
+            </p>
+          </div>
+          <div className="text-right">
+            <span className="text-xs font-mono font-bold text-slate-700">
+              {collectionPct}% of Commitments Verified
+            </span>
+          </div>
+        </div>
+
+        {/* Progress Bar */}
+        <div className="w-full bg-surface-200 h-2.5 rounded-full overflow-hidden flex">
+          <div style={{ width: `${Math.min(collectionPct, 100)}%` }} className="bg-emerald-600 h-full transition-all duration-500"></div>
+          {pendingPct > 0 && (
+            <div style={{ width: `${Math.min(pendingPct, 100 - collectionPct)}%` }} className="bg-amber-400 h-full transition-all duration-500"></div>
+          )}
+        </div>
+
+        {/* Breakdown Tags */}
+        <div className="mt-3.5 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs pt-3 border-t border-surface-200">
+          <div>
+            <span className="text-[10px] text-slate-600 uppercase font-mono font-bold block">Target Commitments</span>
+            <strong className="text-sm font-black text-slate-900 font-sans">{money(targetMinor, currency)}</strong>
+          </div>
+          <div>
+            <span className="text-[10px] text-emerald-700 uppercase font-mono font-bold block">Provider-Confirmed</span>
+            <strong className="text-sm font-black text-emerald-800 font-sans">{money(confirmedMinor, currency)}</strong>
+          </div>
+          <div>
+            <span className="text-[10px] text-amber-700 uppercase font-mono font-bold block">Pending Confirmation</span>
+            <strong className="text-sm font-black text-amber-800 font-sans">{money(pendingMinor, currency)}</strong>
+          </div>
+          <div>
+            <span className="text-[10px] text-red-700 uppercase font-mono font-bold block">Outstanding Balance</span>
+            <strong className="text-sm font-black text-red-800 font-sans">{money(outstandingMinor, currency)}</strong>
           </div>
         </div>
       </div>

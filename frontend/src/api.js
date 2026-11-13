@@ -15,7 +15,11 @@ export async function api(path, options = {}) {
   }
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('application/json') ? await response.json() : await response.text();
-  if (!response.ok) throw new Error(data?.error?.message || 'Request failed');
+  if (!response.ok) {
+    const err = new Error(data?.error?.message || 'Request failed');
+    err.status = response.status;
+    throw err;
+  }
   return data;
 }
 

@@ -89,16 +89,16 @@ export function LandingPage({ onEnterApp, user, onLoginClick }) {
         <div className="landing-container">
           <div className="landing-hero-pill">
             <span className="landing-hero-beacon" />
-            <span className="landing-hero-pill-text">Collaborative Financial Operations & Treasury</span>
+            <span className="landing-hero-pill-text">ONE GROUP • ONE FINANCIAL TRUTH</span>
             <ChevronRight size={14} className="text-emerald-600" />
           </div>
 
           <h1 className="landing-hero-title">
-            The Financial Operating System for Modern Groups & Enterprises
+            Shared Financial Accountability for Groups & Organizations
           </h1>
 
           <p className="landing-hero-subtitle">
-            Unify member dues, commercial invoices, supplier payments, rotating savings circles, and multi-currency treasury with authoritative double-entry accounting precision.
+            Stop managing group money across WhatsApp screenshots, notebooks, and conflicting spreadsheets. HESABU connects member commitments, provider-verified payments, spending approvals, and real-time reconciled funds into one shared truth.
           </p>
 
           <div className="landing-hero-cta-group">
@@ -108,7 +108,7 @@ export function LandingPage({ onEnterApp, user, onLoginClick }) {
             </button>
             <a href="#simulator" className="landing-btn-hero-secondary">
               <Play size={16} className="text-emerald-700 fill-emerald-700" />
-              <span>Explore Interactive Simulator</span>
+              <span>Explore Group Simulator</span>
             </a>
           </div>
 
@@ -116,22 +116,22 @@ export function LandingPage({ onEnterApp, user, onLoginClick }) {
           <div className="landing-trust-bar">
             <div className="landing-trust-item">
               <ShieldCheck size={18} className="text-emerald-700" />
-              <span>GAAP / IFRS Double-Entry Ledger</span>
+              <span>Verified Payment Receipts</span>
             </div>
             <div className="landing-trust-divider" />
             <div className="landing-trust-item">
               <Zap size={18} className="text-amber-700" />
-              <span>Direct Mobile & Bank Settlement</span>
+              <span>Dual-Officer Spending Sign-offs</span>
             </div>
             <div className="landing-trust-divider" />
             <div className="landing-trust-item">
               <Scale size={18} className="text-teal-700" />
-              <span>Real-Time Balanced Financial Statements</span>
+              <span>Balanced Double-Entry Books (Δ = 0.00)</span>
             </div>
             <div className="landing-trust-divider" />
             <div className="landing-trust-item">
               <Bot size={18} className="text-emerald-700" />
-              <span>Autonomous Financial Intelligence</span>
+              <span>Automated Reconciliation Intelligence</span>
             </div>
           </div>
 
