@@ -463,13 +463,18 @@ function App() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setWorkspaces([]);
+      setWorkspaceId('');
+      setWorkspace(null);
+      return;
+    }
     api('/workspaces').then(r => {
       const list = r.workspaces || [];
       setWorkspaces(list);
-      // Validate that the active workspaceId is in the user's workspace list
-      if (!workspaceId || !list.some(w => w.id === workspaceId)) {
-        if (list[0]?.id) setWorkspaceId(list[0].id);
+      // Ensure the active workspaceId is strictly an authorized workspace in the list
+      if (!list.some(w => w.id === workspaceId)) {
+        setWorkspaceId(list[0]?.id || '');
       }
     }).catch(e => {
       if (e.status === 401) logout();
@@ -484,7 +489,7 @@ function App() {
     }
     api(`/workspaces/${workspaceId}`).then(r => setWorkspace(r.workspace)).catch(e => {
       if (e.status === 403 || e.status === 404) {
-        // Workspace access denied or workspace deleted; fallback to user's first valid workspace
+        // Workspace access denied or deleted; reset workspace selection cleanly
         api('/workspaces').then(r => {
           const list = r.workspaces || [];
           setWorkspaces(list);
@@ -494,7 +499,7 @@ function App() {
         setNotice(e.message);
       }
     });
-  }, [workspaceId, refresh]);
+  }, [workspaceId]);
 
   function logout() {
     localStorage.removeItem('hesabu_token');
@@ -525,6 +530,9 @@ function App() {
       <Auth
         onAuth={(authenticatedUser) => {
           setUser(authenticatedUser);
+          setWorkspaces([]);
+          setWorkspaceId('');
+          setWorkspace(null);
           setViewMode('app');
         }}
         onBackToLanding={() => setViewMode('landing')}
@@ -774,7 +782,13 @@ function App() {
         )}
 
         {!workspaceId ? (
-          <EmptyWorkspace onCreated={() => setRefresh(v => v + 1)} />
+          <EmptyWorkspace onCreated={(newWs) => {
+            if (newWs?.id) {
+              setWorkspaces(w => [...w, newWs]);
+              setWorkspaceId(newWs.id);
+            }
+            setRefresh(v => v + 1);
+          }} />
         ) : (
           <Routes>
             <Route
@@ -889,9 +903,9 @@ function WorkspacePage({ page, setPage, workspace, workspaceId, refresh, setNoti
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!workspaceId) return;
+    if (!workspaceId || !workspace || workspace.id !== workspaceId) return;
     Promise.all([
-      api(`/workspaces/${workspaceId}/dashboard`),
+      api(`/workspaces/${workspaceId}/dashboard`).catch(() => ({ summary: null })),
       api(`/workspaces/${workspaceId}/obligations`).catch(() => ({ obligations: [] })),
       api(`/workspaces/${workspaceId}/campaigns`).catch(() => ({ campaigns: [] })),
       api(`/workspaces/${workspaceId}/expenses`).catch(() => ({ expenses: [] })),
@@ -929,10 +943,9 @@ function WorkspacePage({ page, setPage, workspace, workspaceId, refresh, setNoti
       variance: va,
       accounts: acc?.accounts || []
     })).catch(err => {
-      if (err.status === 403) refresh();
       setNotice(err.message);
     });
-  }, [workspaceId, refresh]);
+  }, [workspaceId, workspace?.id, refresh]);
 
   async function create(kind, form) {
     setBusy(true);
@@ -959,9 +972,12 @@ function WorkspacePage({ page, setPage, workspace, workspaceId, refresh, setNoti
         method: 'POST',
         body: JSON.stringify({ rail, phoneNumber })
       });
+      if (rail === 'DEVELOPMENT' && res.payment?.id) {
+        await api(`/payments/${res.payment.id}/dev-confirm`, { method: 'POST' }).catch(() => {});
+      }
       setPayModal(null);
       refresh();
-      setNotice(res.notice || 'Payment attempt created.');
+      setNotice(rail === 'DEVELOPMENT' ? 'Settlement verified and posted to general ledger.' : (res.notice || 'Payment attempt created.'));
     } catch (e) {
       setNotice(e.message);
     }
@@ -2082,39 +2098,50 @@ function ObligationTable({ rows, currency, compact = false, onPay, refresh, setN
 }
 
 function PaymentInitModal({ obligation, currency, onClose, onSubmit }) {
-  const [rail, setRail] = useState('STELLAR');
-  const [phone, setPhone] = useState('');
+  const [rail, setRail] = useState('DEVELOPMENT');
+  const [phone, setPhone] = useState('254712345678');
+  const [busy, setBusy] = useState(false);
+
+  async function handleInit() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onSubmit(rail, phone.trim());
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && !busy && onClose()}>
       <div className="modal">
         <div className="modal-head">
           <div>
             <p className="eyebrow">CHOOSE SETTLEMENT RAIL</p>
             <h2>Pay Obligation</h2>
           </div>
-          <button className="icon-button" onClick={onClose}>×</button>
+          <button className="icon-button" onClick={onClose} disabled={busy}>×</button>
         </div>
         <div className="stack">
           <p className="subtle">
             Obligation: <b>{obligation.title}</b> ({money(obligation.amountMinor, currency)})
           </p>
           <Field label="Settlement Rail">
-            <select value={rail} onChange={e => setRail(e.target.value)}>
-              <option value="STELLAR">Stellar Network (USDC Live Horizon Verification)</option>
+            <select value={rail} onChange={e => setRail(e.target.value)} disabled={busy}>
+              <option value="DEVELOPMENT">Development Simulation (Instant Settle & Balance Ledger)</option>
               <option value="MPESA">Safaricom M-Pesa (Daraja STK Push & Webhook)</option>
               <option value="PAYSHAP_EFT">South Africa PayShap & Rapid EFT (ZAR Clearing)</option>
-              <option value="DEVELOPMENT">Development Simulation (Sandbox)</option>
+              <option value="STELLAR">Stellar Network (USDC Live Horizon Verification)</option>
             </select>
           </Field>
           {rail === 'MPESA' && (
             <Field label="Kenyan Phone Number (2547XXXXXXXX)">
-              <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="e.g. 254712345678" />
+              <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="e.g. 254712345678" disabled={busy} />
             </Field>
           )}
           {rail === 'PAYSHAP_EFT' && (
             <Field label="PayShap Account / Alias Number">
-              <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="e.g. 0821234567 or Bank Account" />
+              <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="e.g. 0821234567 or Bank Account" disabled={busy} />
             </Field>
           )}
           {rail === 'STELLAR' && (
@@ -2123,9 +2150,9 @@ function PaymentInitModal({ obligation, currency, onClose, onSubmit }) {
             </p>
           )}
           <div className="modal-actions">
-            <button type="button" className="secondary" onClick={onClose}>Cancel</button>
-            <button type="button" className="primary" onClick={() => onSubmit(rail, phone.trim())}>
-              Initiate Payment
+            <button type="button" className="secondary" onClick={onClose} disabled={busy}>Cancel</button>
+            <button type="button" className="primary" disabled={busy} onClick={handleInit}>
+              {busy ? 'Initiating Settlement...' : 'Initiate Settlement'}
             </button>
           </div>
         </div>
@@ -2567,15 +2594,19 @@ function EmptyState({ text }) {
 function EmptyWorkspace({ onCreated }) {
   const [form, setForm] = useState({ name: '', type: 'GROUP', currency: 'KES' });
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   async function submit(e) {
     e.preventDefault();
     if (!form.name.trim()) { setError('Please enter a workspace name.'); return; }
+    setBusy(true); setError('');
     try {
-      await api('/workspaces', { method: 'POST', body: JSON.stringify(form) });
-      onCreated();
+      const res = await api('/workspaces', { method: 'POST', body: JSON.stringify(form) });
+      onCreated?.(res.workspace);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -2586,10 +2617,10 @@ function EmptyWorkspace({ onCreated }) {
       <p>Start with a personal, group or organisation workspace. You can create more later.</p>
       <form onSubmit={submit} className="workspace-form">
         <Field label="Workspace name">
-          <input required placeholder="e.g. Nairobi Builders Chama" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+          <input required placeholder="e.g. Nairobi Builders Chama" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} disabled={busy} />
         </Field>
         <Field label="Workspace type">
-          <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
+          <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} disabled={busy}>
             <option value="GROUP">Group / Chama</option>
             <option value="COMMUNITY">Community / Table Bank</option>
             <option value="SME">SME / Business</option>
@@ -2598,7 +2629,7 @@ function EmptyWorkspace({ onCreated }) {
           </select>
         </Field>
         <Field label="Currency">
-          <select value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })}>
+          <select value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })} disabled={busy}>
             <option>KES</option>
             <option>ZAR</option>
             <option>USD</option>
@@ -2607,7 +2638,9 @@ function EmptyWorkspace({ onCreated }) {
           </select>
         </Field>
         {error && <p className="error">{error}</p>}
-        <button className="primary full">Create workspace</button>
+        <button className="primary full" disabled={busy}>
+          {busy ? 'Creating workspace...' : 'Create workspace'}
+        </button>
       </form>
     </div>
   );

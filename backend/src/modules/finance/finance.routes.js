@@ -448,7 +448,16 @@ router.post('/obligations/:id/payments', requireWorkspaceRoleByObligation, async
   const pending = await prisma.payment.findFirst({
     where: { obligationId: obligation.id, status: { in: ['PENDING', 'PROCESSING'] } }
   });
-  if (pending) throw new AppError('A payment attempt is already pending for this obligation.', 409);
+  if (pending) {
+    // Supercede previous incomplete payment attempt so the user or member is never blocked
+    await prisma.payment.update({
+      where: { id: pending.id },
+      data: {
+        status: 'FAILED',
+        metadata: { ...(pending.metadata || {}), cancelReason: 'Superceded by subsequent payment attempt' }
+      }
+    });
+  }
 
   const idempotencyKey = data.idempotencyKey || randomUUID();
   let metadata = null;
@@ -595,6 +604,26 @@ router.post('/payments/:id/dev-confirm', asyncHandler(async (req, res) => {
   });
 
   res.json({ payment: jsonSafe(result), notice: 'Development simulated settlement recorded.' });
+}));
+
+// Cancel an unconfirmed payment attempt
+router.post('/payments/:id/cancel', asyncHandler(async (req, res) => {
+  const payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
+  if (!payment) throw new AppError('Payment not found.', 404);
+  const membership = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId: req.user.id, workspaceId: payment.workspaceId } }
+  });
+  if (!membership) throw new AppError('Workspace access denied.', 403);
+  if (payment.status === 'CONFIRMED') throw new AppError('Confirmed payments cannot be cancelled.', 400);
+
+  const updated = await prisma.payment.update({
+    where: { id: payment.id },
+    data: {
+      status: 'FAILED',
+      metadata: { ...(payment.metadata || {}), cancelledAt: new Date().toISOString(), cancelReason: 'Cancelled by user' }
+    }
+  });
+  res.json({ payment: jsonSafe(updated), notice: 'Payment attempt cancelled.' });
 }));
 
 // Real Stellar on-chain verification
