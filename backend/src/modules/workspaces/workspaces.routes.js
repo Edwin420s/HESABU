@@ -130,4 +130,98 @@ router.delete('/:id/members/:memberId', requireWorkspaceRole, allowRoles('OWNER'
   res.json({ success: true, message: 'Member removed from workspace.' });
 }));
 
+// Authoritative Chart of Accounts listing & creation per workspace
+router.get('/:id/accounts', requireWorkspaceRole, asyncHandler(async (req, res) => {
+  const workspace = await prisma.workspace.findUnique({ where: { id: req.params.id } });
+  if (!workspace) throw new AppError('Workspace not found', 404);
+
+  let accounts = await prisma.chartOfAccount.findMany({
+    where: { workspaceId: req.params.id },
+    orderBy: { code: 'asc' }
+  });
+
+  if (accounts.length === 0) {
+    await initializeWorkspaceChartOfAccounts(workspace.id, workspace.currency);
+    accounts = await prisma.chartOfAccount.findMany({
+      where: { workspaceId: req.params.id },
+      orderBy: { code: 'asc' }
+    });
+  }
+
+  // Calculate live balances per account from posted journal lines
+  const lines = await prisma.journalLine.findMany({
+    where: { entry: { workspaceId: req.params.id, status: 'POSTED' } },
+    select: { accountCode: true, side: true, amountMinor: true, currency: true }
+  });
+
+  const balanceMap = {};
+  for (const line of lines) {
+    if (!balanceMap[line.accountCode]) {
+      balanceMap[line.accountCode] = { debitsMinor: 0n, creditsMinor: 0n };
+    }
+    if (line.side === 'DEBIT') {
+      balanceMap[line.accountCode].debitsMinor += line.amountMinor;
+    } else {
+      balanceMap[line.accountCode].creditsMinor += line.amountMinor;
+    }
+  }
+
+  const enriched = accounts.map(acc => {
+    const b = balanceMap[acc.code] || { debitsMinor: 0n, creditsMinor: 0n };
+    const netMinor = (acc.type === 'ASSET' || acc.type === 'EXPENSE')
+      ? b.debitsMinor - b.creditsMinor
+      : b.creditsMinor - b.debitsMinor;
+    return {
+      ...acc,
+      debitsMinor: b.debitsMinor.toString(),
+      creditsMinor: b.creditsMinor.toString(),
+      netBalanceMinor: netMinor.toString()
+    };
+  });
+
+  res.json({ accounts: jsonSafe(enriched) });
+}));
+
+router.post('/:id/accounts', requireWorkspaceRole, allowRoles('OWNER', 'ADMIN', 'FINANCE_MANAGER'), asyncHandler(async (req, res) => {
+  const data = z.object({
+    code: z.string().trim().min(3).max(50),
+    name: z.string().trim().min(2).max(100),
+    type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE']),
+    description: z.string().optional()
+  }).parse(req.body);
+
+  const workspace = await prisma.workspace.findUnique({ where: { id: req.params.id } });
+  if (!workspace) throw new AppError('Workspace not found', 404);
+
+  const existing = await prisma.chartOfAccount.findUnique({
+    where: { workspaceId_code: { workspaceId: req.params.id, code: data.code } }
+  });
+  if (existing) throw new AppError(`Account code "${data.code}" already exists in this workspace.`, 409);
+
+  const account = await prisma.chartOfAccount.create({
+    data: {
+      workspaceId: req.params.id,
+      code: data.code,
+      name: data.name,
+      type: data.type,
+      currency: workspace.currency,
+      description: data.description || null,
+      isSystem: false
+    }
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      workspaceId: req.params.id,
+      actorId: req.user.id,
+      action: 'ACCOUNT_CREATED',
+      entityType: 'ChartOfAccount',
+      entityId: account.id,
+      details: { code: account.code, name: account.name, type: account.type }
+    }
+  });
+
+  res.status(201).json({ account: jsonSafe(account) });
+}));
+
 export default router;

@@ -7,3 +7,4 @@ export { LoansView } from './loans/LoansView';
 export { RoscaView } from './rosca/RoscaView';
 export { AgentCopilotView } from './agent/AgentCopilotView';
 export { BudgetVarianceView } from './budget/BudgetVarianceView';
+export { AccountsView } from './accounts/AccountsView';

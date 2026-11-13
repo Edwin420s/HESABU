@@ -634,4 +634,33 @@ describe('Comprehensive End-to-End Frontend Modules & Workflows Suite', () => {
     expect(verifyProofRes.status).toBe(200);
     expect(verifyProofRes.body.anchorRegistered).toBe(true);
   });
+
+  // 18. Chart of Accounts Portfolio & Balances
+  it('18. CHART OF ACCOUNTS: lists ledger accounts with live debit/credit balances and creates custom account', async () => {
+    // List accounts with balances
+    const listRes = await request(app)
+      .get(`/api/workspaces/${workspaceId}/accounts`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(listRes.status).toBe(200);
+    expect(Array.isArray(listRes.body.accounts)).toBe(true);
+    expect(listRes.body.accounts.length).toBeGreaterThan(0);
+    const cashAccount = listRes.body.accounts.find(a => a.code === '1000-CASH-CLEARING' || a.code.startsWith('1000'));
+    expect(cashAccount).toBeDefined();
+    expect(cashAccount.debitsMinor).toBeDefined();
+    expect(cashAccount.creditsMinor).toBeDefined();
+
+    // Create a new custom GL account
+    const createRes = await request(app)
+      .post(`/api/workspaces/${workspaceId}/accounts`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: '1099',
+        name: 'Stellar Settlement Clearing Account',
+        type: 'ASSET',
+        description: 'Multi-rail transit account for XLM/EURC liquidity'
+      });
+    expect(createRes.status).toBe(201);
+    expect(createRes.body.account.code).toBe('1099');
+    expect(createRes.body.account.name).toBe('Stellar Settlement Clearing Account');
+  });
 });
