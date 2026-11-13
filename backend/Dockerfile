@@ -17,5 +17,6 @@ COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/clie
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY prisma ./prisma
 COPY src ./src
+USER node
 EXPOSE 4000
 CMD ["node", "src/server.js"]

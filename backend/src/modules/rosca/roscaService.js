@@ -260,6 +260,13 @@ export class RoscaService {
   }
 
   async disburseRound(cycleId, roundNumber, actorId) {
+    if (roundNumber !== undefined && roundNumber !== null) {
+      const cycle = await prisma.roscaCycle.findUnique({ where: { id: cycleId } });
+      if (!cycle) throw new AppError(`ROSCA cycle ${cycleId} not found`, 404);
+      if (Number(roundNumber) !== cycle.currentRound) {
+        throw new AppError(`Cannot disburse round ${roundNumber}. Active current round is ${cycle.currentRound}.`, 400);
+      }
+    }
     return this.executePayoutAndRotate(cycleId, actorId);
   }
 

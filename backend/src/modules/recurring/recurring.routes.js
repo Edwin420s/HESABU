@@ -63,6 +63,7 @@ router.post('/workspaces/:workspaceId/recurring', requireWorkspaceRole, allowRol
 router.post('/recurring/:id/trigger', asyncHandler(async (req, res) => {
   const schedule = await prisma.recurringSchedule.findUnique({ where: { id: req.params.id } });
   if (!schedule) throw new AppError('Recurring schedule not found.', 404);
+  if (!schedule.active) throw new AppError('This recurring schedule is paused or inactive.', 400);
 
   const membership = await prisma.membership.findUnique({
     where: { userId_workspaceId: { userId: req.user.id, workspaceId: schedule.workspaceId } }

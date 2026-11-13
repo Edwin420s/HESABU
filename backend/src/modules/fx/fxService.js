@@ -205,17 +205,22 @@ export class FxService {
     if (!quote) throw new AppError('FX quote not found.', 404);
 
     if (quote.status === 'EXECUTED') {
-      throw new AppError('Quote has already been executed.', 400);
+      throw new AppError('Quote has already been executed.', 409);
     }
     if (new Date() > quote.expiresAt) {
       throw new AppError('FX quote has expired and cannot be executed.', 400);
     }
 
     const conversion = await prisma.$transaction(async (tx) => {
-      await tx.fXQuote.update({
-        where: { id: quote.id },
+      // Atomic conditional update prevents concurrent execution races
+      const updated = await tx.fXQuote.updateMany({
+        where: { id: quote.id, status: { in: ['ACTIVE', 'LOCKED'] } },
         data: { status: 'EXECUTED' }
       });
+
+      if (updated.count === 0) {
+        throw new AppError('FX quote has already been executed or is no longer active.', 409);
+      }
 
       const conv = await tx.fXConversion.create({
         data: {

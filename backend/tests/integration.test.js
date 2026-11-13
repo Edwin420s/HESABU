@@ -518,9 +518,17 @@ describe('HESABU Full Enterprise Platform Integration Tests (No Mock Data)', () 
       .set('Authorization', `Bearer ${authToken}`);
     expect(trigRes.status).toBe(200);
     expect(trigRes.body.generatedCount).toBeGreaterThan(0);
+
+    // Inactive schedule trigger is rejected
+    await prisma.recurringSchedule.update({ where: { id: schedId }, data: { active: false } });
+    const inactiveRes = await request(app)
+      .post(`/api/recurring/${schedId}/trigger`)
+      .set('Authorization', `Bearer ${authToken}`);
+    expect(inactiveRes.status).toBe(400);
+    expect(inactiveRes.body.error.message).toContain('paused or inactive');
   });
 
-  it('17. Generates cryptographic Statement Anchor with SHA-256 fingerprint', async () => {
+  it('17. Generates cryptographic Statement Anchor with SHA-256 fingerprint and verifies leaf proof', async () => {
     const res = await request(app)
       .post(`/api/workspaces/${workspaceId}/anchors/generate`)
       .set('Authorization', `Bearer ${authToken}`)
@@ -528,6 +536,23 @@ describe('HESABU Full Enterprise Platform Integration Tests (No Mock Data)', () 
     expect(res.status).toBe(201);
     expect(res.body.canonicalHash).toMatch(/^[0-9a-f]{64}$/);
     expect(res.body.verificationProof.algorithm).toBe('SHA-256');
+
+    const rootHash = res.body.canonicalHash;
+    const anchorId = res.body.anchor.id;
+
+    // Verify leaf proof endpoint using the anchored merkleRootHash
+    const verifyRes = await request(app)
+      .post(`/api/workspaces/${workspaceId}/anchors/verify-leaf`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        rootHash,
+        anchorId,
+        leafHash: rootHash,
+        proof: []
+      });
+    expect(verifyRes.status).toBe(200);
+    expect(verifyRes.body.anchorRegistered).toBe(true);
+    expect(verifyRes.body.rootHash).toBe(rootHash);
   });
 
   it('18. Interacts with Agentic Financial Copilot chat query', async () => {

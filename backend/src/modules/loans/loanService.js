@@ -284,8 +284,21 @@ export class LoanService {
       });
       if (!loan) throw new AppError('Loan not found', 404);
 
-      const newBalance = loan.balanceMinor > repaymentAmount ? loan.balanceMinor - repaymentAmount : 0n;
+      if (loan.status !== 'ACTIVE') {
+        throw new AppError(`Cannot record repayment on loan with status "${loan.status}". Loan must be in "ACTIVE" status.`, 400);
+      }
+
+      if (repaymentAmount > loan.balanceMinor) {
+        throw new AppError(
+          `Repayment amount (${repaymentAmount.toString()}) exceeds the total outstanding balance (${loan.balanceMinor.toString()}). Overpayments are not permitted.`,
+          400
+        );
+      }
+
+      const newBalance = loan.balanceMinor - repaymentAmount;
       const isFullyRepaid = newBalance === 0n;
+
+      const isSettlementLinked = Boolean(transactionRef && (transactionRef.startsWith('SETTLE-') || transactionRef.startsWith('MPESA-') || transactionRef.startsWith('PAYSHAP-')));
 
       await tx.loanRepayment.create({
         data: {
@@ -293,7 +306,7 @@ export class LoanService {
           amountMinor: repaymentAmount,
           currency: loan.workspace?.currency || 'KES',
           paymentRef: transactionRef || `REP-${Date.now()}`,
-          verified: true
+          verified: isSettlementLinked
         }
       });
 

@@ -34,8 +34,10 @@ describe('Authoritative Chart of Accounts & Central Double-Entry Posting Engine'
     expect(isValidAccountCode('5050-MEMBER-REIMBURSEMENTS')).toBe(true);
 
     expect(isValidAccountCode('UNKNOWN_RANDOM_ACCOUNT')).toBe(false);
+    expect(isValidAccountCode('9999-UNREGISTERED-CODE')).toBe(false);
     expect(isValidAccountCode('foobar')).toBe(false);
     expect(() => assertValidAccountCode('bad-code')).toThrow('Invalid Chart of Accounts code');
+    expect(() => assertValidAccountCode('9999-UNREGISTERED')).toThrow('Invalid Chart of Accounts code');
   });
 
   it('posts a balanced double-entry journal entry via central postingService', async () => {

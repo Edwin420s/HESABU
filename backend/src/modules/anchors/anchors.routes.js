@@ -79,7 +79,7 @@ router.post('/workspaces/:workspaceId/anchors/verify-leaf', requireWorkspaceRole
   const anchor = await prisma.statementAnchor.findFirst({
     where: {
       workspaceId: req.params.workspaceId,
-      merkleRoot: rootHash,
+      merkleRootHash: rootHash,
       ...(anchorId ? { id: anchorId } : {})
     }
   });

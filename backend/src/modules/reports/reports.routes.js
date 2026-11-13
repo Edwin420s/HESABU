@@ -65,7 +65,7 @@ reportsRouter.get('/workspaces/:workspaceId/reports/statement/download', require
       periodLabel: String(period),
       inflows,
       outflows,
-      merkleRoot: latestAnchor?.merkleRoot || '',
+      merkleRoot: latestAnchor?.merkleRootHash || '',
       sorobanContractId: latestAnchor?.contractAddress || ''
     });
 

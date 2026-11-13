@@ -68,5 +68,27 @@ describe('Table Banking & Peer Lending Loan Engine', () => {
     const rep2 = await loans.recordRepayment(loan.id, rep1.outstandingMinor, 'MPESA_REF_2');
     expect(rep2.status).toBe('FULLY_REPAID');
     expect(rep2.outstandingMinor).toBe(0);
+
+    // Overpayment attempt after full repayment or exceeding balance throws 400
+    await expect(
+      loans.recordRepayment(loan.id, 1000, 'EXTRA_REF')
+    ).rejects.toThrow('Cannot record repayment on loan with status');
+  });
+
+  it('rejects repayment exceeding outstanding balance on active loan', async () => {
+    const loan = await loans.applyLoan({
+      workspaceId: 'ws_demo',
+      memberId: 'm_borrower_2',
+      principalMinor: 1000000,
+      interestRatePct: 10,
+      durationMonths: 2,
+      interestType: 'FLAT',
+    });
+    await loans.approveLoan(loan.id, 'm_admin_approver');
+    await loans.disburseLoan(loan.id);
+
+    await expect(
+      loans.recordRepayment(loan.id, loan.totalPayableMinor + 100000, 'EXCESS_PAYMENT')
+    ).rejects.toThrow('exceeds the total outstanding balance');
   });
 });

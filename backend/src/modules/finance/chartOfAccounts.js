@@ -234,14 +234,13 @@ export const CHART_OF_ACCOUNTS = {
 };
 
 /**
- * Validates whether an account code exists in the official Chart of Accounts
- * or conforms to authoritative 4-digit GAAP naming pattern (e.g. 1000-NAME).
+ * Validates whether an account code exists in the official authoritative Chart of Accounts.
+ * Rejects unregistered or arbitrary account codes.
  */
 export function isValidAccountCode(code) {
   if (!code || typeof code !== 'string') return false;
   const clean = code.trim().toUpperCase();
-  if (CHART_OF_ACCOUNTS[clean]) return true;
-  return /^\d{4}-[A-Z0-9_-]+$/.test(clean);
+  return Boolean(CHART_OF_ACCOUNTS[clean]);
 }
 
 export function assertValidAccountCode(code) {
