@@ -18,12 +18,22 @@ import {
   AgentCopilotView,
   BudgetVarianceView
 } from './features/index';
+import { LandingPage } from './LandingPage';
 
-function Auth({ onAuth }) {
+function Auth({ onAuth, onBackToLanding }) {
   const [mode, setMode] = useState('login');
   const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  function fillDemo() {
+    setMode('login');
+    setForm({
+      email: 'demo@hesabu.local',
+      password: 'HesabuDemo!2026',
+      name: 'Demo Administrator'
+    });
+  }
 
   async function submit(e) {
     e.preventDefault(); setError(''); setBusy(true);
@@ -38,27 +48,72 @@ function Auth({ onAuth }) {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <Brand />
+        <div className="flex items-center justify-between mb-4">
+          <Brand />
+          {onBackToLanding && (
+            <button
+              type="button"
+              className="text-xs text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-1"
+              onClick={onBackToLanding}
+            >
+              <span>← Product Tour</span>
+            </button>
+          )}
+        </div>
+
         <p className="eyebrow">ENTERPRISE FINANCIAL OPERATIONS</p>
         <h1>{mode === 'login' ? 'Welcome back.' : 'Create your account.'}</h1>
         <p className="subtle">Multi-rail collaborative financial operations for chamas, cooperatives, SMEs, and associations.</p>
+
+        <div className="flex bg-slate-100 p-1 rounded-lg my-4 gap-1">
+          <button
+            type="button"
+            className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${mode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}
+            onClick={() => setMode('login')}
+          >
+            Sign in
+          </button>
+          <button
+            type="button"
+            className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${mode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}
+            onClick={() => setMode('register')}
+          >
+            Register
+          </button>
+        </div>
+
         <form onSubmit={submit} className="stack">
           {mode === 'register' && (
             <Field label="Full name">
               <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Your full name" />
             </Field>
           )}
-          <Field label="Email">
-            <input type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="name@company.com" />
+          <Field label="Email address">
+            <input type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="name@organization.com" />
           </Field>
           <Field label="Password">
-            <input type="password" required minLength="10" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••••••" />
+            <input type="password" required minLength="8" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••••••" />
           </Field>
-          {error && <p className="error">{error}</p>}
+          {error && <p className="text-xs text-red-600 bg-red-50 p-2.5 rounded-md border border-red-200">{error}</p>}
           <button className="primary full" disabled={busy}>
-            {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
+            {busy ? 'Please wait…' : mode === 'login' ? 'Sign in to workspace' : 'Create organization account'}
           </button>
         </form>
+
+        <div className="demo-credentials-box flex items-center justify-between mt-5">
+          <div>
+            <div className="font-bold text-slate-800 text-[11px]">Quick Demo Evaluation</div>
+            <div className="text-[10px] text-slate-500">demo@hesabu.local • HesabuDemo!2026</div>
+          </div>
+          <button
+            type="button"
+            className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 hover:bg-emerald-100"
+            onClick={fillDemo}
+          >
+            Auto Fill
+          </button>
+        </div>
+
         <button className="text-button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
           {mode === 'login' ? 'New to HESABU? Create an account' : 'Already registered? Sign in'}
         </button>
@@ -67,11 +122,14 @@ function Auth({ onAuth }) {
   );
 }
 
-function Brand() {
+function Brand({ onClick }) {
   return (
-    <div className="brand">
-      <span className="brand-mark">H</span>
-      <span>HESABU</span>
+    <div className="brand" onClick={onClick}>
+      <div className="brand-mark">H</div>
+      <div className="brand-info">
+        <span className="brand-name">HESABU</span>
+        <span className="brand-tag">FINANCIAL OS</span>
+      </div>
     </div>
   );
 }
@@ -88,6 +146,10 @@ function Field({ label, children }) {
 function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hesabu_user')); } catch { return null; }
+  });
+  const [viewMode, setViewMode] = useState(() => {
+    const savedUser = localStorage.getItem('hesabu_user');
+    return savedUser ? 'app' : 'landing';
   });
   const [workspaces, setWorkspaces] = useState([]);
   const [workspaceId, setWorkspaceId] = useState('');
@@ -116,15 +178,44 @@ function App() {
     setUser(null);
     setWorkspaces([]);
     setWorkspace(null);
+    setViewMode('landing');
     navigate('/');
   }
 
-  if (!user) return <Auth onAuth={setUser} />;
+  // If user chose to view the Landing Page or is not yet logged in and viewing landing
+  if (viewMode === 'landing') {
+    return (
+      <LandingPage
+        user={user}
+        onEnterApp={() => {
+          if (user) {
+            setViewMode('app');
+          } else {
+            setViewMode('auth');
+          }
+        }}
+        onLoginClick={() => setViewMode('auth')}
+      />
+    );
+  }
+
+  if (!user || viewMode === 'auth') {
+    return (
+      <Auth
+        onAuth={(authenticatedUser) => {
+          setUser(authenticatedUser);
+          setViewMode('app');
+        }}
+        onBackToLanding={() => setViewMode('landing')}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <Brand />
+        <Brand onClick={() => setViewMode('landing')} />
+
         <div className="workspace-picker">
           <div className="workspace-icon"><Building2 size={17} /></div>
           <select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)}>
@@ -134,39 +225,71 @@ function App() {
               </option>
             ))}
           </select>
-          <ChevronDown size={14} />
+          <ChevronDown size={14} className="text-slate-400" />
         </div>
-        <p className="nav-label">OPERATIONS</p>
-        <nav>
-          <NavButton active={page === 'overview'} onClick={() => setPage('overview')} icon={<LayoutDashboard size={17} />} label="Overview" />
-          <NavButton active={page === 'contributions'} onClick={() => setPage('contributions')} icon={<ArrowDownLeft size={17} />} label="Contributions" />
-          <NavButton active={page === 'invoices'} onClick={() => setPage('invoices')} icon={<FileText size={17} />} label="Invoices & AR" />
-          <NavButton active={page === 'bills'} onClick={() => setPage('bills')} icon={<Receipt size={17} />} label="Bills & AP" />
-          <NavButton active={page === 'procurement'} onClick={() => setPage('procurement')} icon={<Building2 size={17} />} label="Procurement" />
-          <NavButton active={page === 'campaigns'} onClick={() => setPage('campaigns')} icon={<Target size={17} />} label="Campaigns & Goals" />
-          <NavButton active={page === 'expenses'} onClick={() => setPage('expenses')} icon={<Receipt size={17} />} label="Expenses & Splits" />
-          <NavButton active={page === 'reimbursements'} onClick={() => setPage('reimbursements')} icon={<PiggyBank size={17} />} label="Reimbursements" />
-          <NavButton active={page === 'recurring'} onClick={() => setPage('recurring')} icon={<Repeat size={17} />} label="Recurring Dues" />
-          <NavButton active={page === 'rosca'} onClick={() => setPage('rosca')} icon={<Repeat size={17} />} label="Merry-Go-Round" />
-          <NavButton active={page === 'loans'} onClick={() => setPage('loans')} icon={<PiggyBank size={17} />} label="Table Loans" />
-          <NavButton active={page === 'budgets'} onClick={() => setPage('budgets')} icon={<Target size={17} />} label="Budget Variance" />
-          <NavButton active={page === 'fx'} onClick={() => setPage('fx')} icon={<TrendingUp size={17} />} label="FX & Treasury" />
-          <NavButton active={page === 'payments'} onClick={() => setPage('payments')} icon={<CreditCard size={17} />} label="Payments & Rails" />
-          <NavButton active={page === 'agent'} onClick={() => setPage('agent')} icon={<Bot size={17} />} label="Agentic Copilot" />
-        </nav>
-        <p className="nav-label" style={{ marginTop: '16px' }}>GOVERNANCE & LEDGER</p>
-        <nav>
-          <NavButton active={page === 'ledger'} onClick={() => setPage('ledger')} icon={<BookOpen size={17} />} label="Double-Entry Ledger" />
-          <NavButton active={page === 'statements'} onClick={() => setPage('statements')} icon={<FileSpreadsheet size={17} />} label="Financial Statements" />
-          <NavButton active={page === 'anchors'} onClick={() => setPage('anchors')} icon={<Lock size={17} />} label="Statement Anchors" />
-          <NavButton active={page === 'members'} onClick={() => setPage('members')} icon={<Users size={17} />} label="Members & Access" />
-          <NavButton active={page === 'audit'} onClick={() => setPage('audit')} icon={<History size={17} />} label="Audit Trail" />
-          <NavButton active={page === 'reports'} onClick={() => setPage('reports')} icon={<FileText size={17} />} label="Exports" />
-        </nav>
+
+        <div className="nav-group">
+          <p className="nav-label">Core Operations</p>
+          <nav>
+            <NavButton active={page === 'overview'} onClick={() => setPage('overview')} icon={<LayoutDashboard size={16} />} label="Overview" />
+            <NavButton active={page === 'contributions'} onClick={() => setPage('contributions')} icon={<ArrowDownLeft size={16} />} label="Contributions" />
+            <NavButton active={page === 'recurring'} onClick={() => setPage('recurring')} icon={<Repeat size={16} />} label="Recurring Dues" />
+            <NavButton active={page === 'campaigns'} onClick={() => setPage('campaigns')} icon={<Target size={16} />} label="Campaigns & Goals" />
+          </nav>
+        </div>
+
+        <div className="nav-group">
+          <p className="nav-label">Commercial AP/AR</p>
+          <nav>
+            <NavButton active={page === 'invoices'} onClick={() => setPage('invoices')} icon={<FileText size={16} />} label="Invoices & AR" />
+            <NavButton active={page === 'bills'} onClick={() => setPage('bills')} icon={<Receipt size={16} />} label="Bills & AP" />
+            <NavButton active={page === 'procurement'} onClick={() => setPage('procurement')} icon={<Building2 size={16} />} label="Procurement" />
+            <NavButton active={page === 'expenses'} onClick={() => setPage('expenses')} icon={<Receipt size={16} />} label="Expenses & Splits" />
+            <NavButton active={page === 'reimbursements'} onClick={() => setPage('reimbursements')} icon={<PiggyBank size={16} />} label="Reimbursements" />
+          </nav>
+        </div>
+
+        <div className="nav-group">
+          <p className="nav-label">Chama & Cooperative</p>
+          <nav>
+            <NavButton active={page === 'rosca'} onClick={() => setPage('rosca')} icon={<Repeat size={16} />} label="Merry-Go-Round" />
+            <NavButton active={page === 'loans'} onClick={() => setPage('loans')} icon={<PiggyBank size={16} />} label="Table Loans" />
+            <NavButton active={page === 'budgets'} onClick={() => setPage('budgets')} icon={<Target size={16} />} label="Budget Variance" />
+          </nav>
+        </div>
+
+        <div className="nav-group">
+          <p className="nav-label">Treasury & Rails</p>
+          <nav>
+            <NavButton active={page === 'fx'} onClick={() => setPage('fx')} icon={<TrendingUp size={16} />} label="FX & Treasury" />
+            <NavButton active={page === 'payments'} onClick={() => setPage('payments')} icon={<CreditCard size={16} />} label="Payments & Rails" />
+            <NavButton active={page === 'agent'} onClick={() => setPage('agent')} icon={<Bot size={16} />} label="Agentic Copilot" />
+          </nav>
+        </div>
+
+        <div className="nav-group">
+          <p className="nav-label">Governance & Ledger</p>
+          <nav>
+            <NavButton active={page === 'ledger'} onClick={() => setPage('ledger')} icon={<BookOpen size={16} />} label="Double-Entry Ledger" />
+            <NavButton active={page === 'statements'} onClick={() => setPage('statements')} icon={<FileSpreadsheet size={16} />} label="Financial Statements" />
+            <NavButton active={page === 'anchors'} onClick={() => setPage('anchors')} icon={<Lock size={16} />} label="Statement Anchors" />
+            <NavButton active={page === 'audit'} onClick={() => setPage('audit')} icon={<History size={16} />} label="Audit Trail" />
+            <NavButton active={page === 'reports'} onClick={() => setPage('reports')} icon={<FileText size={16} />} label="Exports & Tax" />
+            <NavButton active={page === 'members'} onClick={() => setPage('members')} icon={<Users size={16} />} label="Members & Access" />
+          </nav>
+        </div>
+
         <div className="sidebar-bottom">
-          <div className="help-link"><CircleHelp size={16} /> Financial Operations Platform</div>
+          <button className="tour-link full" onClick={() => setViewMode('landing')}>
+            <span className="flex items-center gap-1.5">
+              <Sparkles size={14} className="text-emerald-600" />
+              <span>Product Tour & Landing</span>
+            </span>
+            <ArrowRight size={13} />
+          </button>
+
           <div className="profile">
-            <div className="avatar">{user.name?.[0]?.toUpperCase()}</div>
+            <div className="avatar">{user.name?.[0]?.toUpperCase() || 'U'}</div>
             <div className="profile-info">
               <b>{user.name}</b>
               <small>{user.email}</small>
@@ -178,21 +301,44 @@ function App() {
 
       <main className="main">
         <header className="topbar">
-          <div>
+          <div className="topbar-left">
             <span className="breadcrumb">Workspace</span>
             <span className="slash">/</span>
-            <b>{workspace?.name || 'Loading workspace'}</b>
+            <span className="breadcrumb-active">{page.replace('-', ' ')}</span>
           </div>
+
           <div className="top-actions">
-            <span className="status-dot" /> {workspace?.country === 'ZA' ? '🇿🇦 South Africa (ZAR · PayShap & Horizon)' : '🇰🇪 Kenya (KES · M-Pesa STK & Horizon)'}
-            <button className="icon-button" onClick={() => setRefresh(v => v + 1)} title="Refresh Data"><RefreshCw size={15} /></button>
-            <button className="icon-button"><Bell size={17} /></button>
+            <div className="top-pill">
+              <span className="status-dot" />
+              <span>Operational</span>
+            </div>
+
+            <div className="top-pill">
+              <span>{workspace?.country === 'ZA' ? '🇿🇦 ZAR' : '🇰🇪 KES'}</span>
+            </div>
+
+            <button
+              className="text-xs font-semibold text-slate-600 hover:text-emerald-700 bg-slate-100 hover:bg-emerald-50 border border-slate-200 px-2.5 py-1 rounded-md flex items-center gap-1.5 transition"
+              onClick={() => setViewMode('landing')}
+              title="View Public Product Landing Page"
+            >
+              <Globe size={13} />
+              <span>Tour / Landing</span>
+            </button>
+
+            <button className="icon-button" onClick={() => setRefresh(v => v + 1)} title="Refresh Live Data">
+              <RefreshCw size={15} />
+            </button>
           </div>
         </header>
 
         {notice && (
           <div className="notice" onClick={() => setNotice('')}>
-            {notice} <span>×</span>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 size={15} className="text-emerald-600" />
+              <span>{notice}</span>
+            </div>
+            <span className="notice-close">×</span>
           </div>
         )}
 
