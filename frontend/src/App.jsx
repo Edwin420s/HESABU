@@ -174,10 +174,10 @@ function NavTab({ active, onClick, icon, label }) {
     <button
       type="button"
       onClick={onClick}
-      className={`px-3 py-1.5 rounded font-medium flex items-center gap-1.5 transition whitespace-nowrap text-xs cursor-pointer ${
+      className={`px-2.5 py-1.5 rounded font-medium flex items-center gap-1.5 transition whitespace-nowrap text-xs cursor-pointer ${
         active
-          ? 'bg-brand-950 font-bold text-white border border-brand-700/60 shadow-sm'
-          : 'text-emerald-200/80 hover:text-white hover:bg-brand-800/60'
+          ? 'bg-emerald-600 font-bold text-white shadow-sm ring-1 ring-emerald-400'
+          : 'text-emerald-200/90 hover:text-white hover:bg-brand-800/80'
       }`}
     >
       {icon}
@@ -689,26 +689,49 @@ function App() {
         </div>
 
         {/* Secondary Nav / Architecture Layer Tabs */}
-        <div className="px-4 sm:px-6 bg-brand-900 border-t border-brand-800/80 flex items-center justify-between overflow-x-auto text-xs no-scrollbar">
+        <div className="px-3 sm:px-6 bg-brand-900 border-t border-brand-800/80 flex items-center justify-between overflow-x-auto text-xs no-scrollbar">
           <div className="flex items-center gap-1 py-1">
-            <NavTab active={page === 'overview'} onClick={() => setPage('overview')} icon={<LayoutDashboard size={14} className="text-emerald-400" />} label="Command Center" />
-            <NavTab active={page === 'contributions'} onClick={() => setPage('contributions')} icon={<ArrowDownLeft size={14} />} label="Obligations & Dues" />
-            <NavTab active={page === 'invoices'} onClick={() => setPage('invoices')} icon={<FileText size={14} />} label="Commercial AP/AR" />
-            <NavTab active={page === 'bills'} onClick={() => setPage('bills')} icon={<Receipt size={14} />} label="Supplier Bills" />
-            <NavTab active={page === 'rosca' || page === 'loans'} onClick={() => setPage('rosca')} icon={<Repeat size={14} className="text-amber-400" />} label="ROSCA & Loans" />
-            <NavTab active={page === 'payments' || page === 'fx'} onClick={() => setPage('payments')} icon={<CreditCard size={14} />} label="Multi-Rail Treasury" />
-            <NavTab active={page === 'ledger'} onClick={() => setPage('ledger')} icon={<BookOpen size={14} className="text-emerald-400" />} label="Double-Entry Ledger" />
-            <NavTab active={page === 'accounts'} onClick={() => setPage('accounts')} icon={<Wallet size={14} className="text-teal-400" />} label="Chart of Accounts" />
-            <NavTab active={page === 'statements'} onClick={() => setPage('statements')} icon={<FileSpreadsheet size={14} />} label="Statements" />
-            <NavTab active={page === 'anchors'} onClick={() => setPage('anchors')} icon={<Lock size={14} className="text-cyan-400" />} label="Soroban Anchors" />
-            <NavTab active={page === 'agent'} onClick={() => setPage('agent')} icon={<Bot size={14} className="text-emerald-300" />} label="AI Copilot" />
-            <NavTab active={page === 'procurement'} onClick={() => setPage('procurement')} icon={<Building2 size={14} />} label="Procurement" />
-            <NavTab active={page === 'budgets'} onClick={() => setPage('budgets')} icon={<Target size={14} />} label="Budgets" />
-            <NavTab active={page === 'members'} onClick={() => setPage('members')} icon={<Users size={14} />} label="Members" />
-            <NavTab active={page === 'audit'} onClick={() => setPage('audit')} icon={<History size={14} />} label="Audit Trail" />
+            {/* Core & Dues */}
+            <NavTab active={page === 'overview'} onClick={() => setPage('overview')} icon={<LayoutDashboard size={13} className={page === 'overview' ? 'text-white' : 'text-emerald-400'} />} label="Overview" />
+            <NavTab active={page === 'contributions'} onClick={() => setPage('contributions')} icon={<ArrowDownLeft size={13} />} label="Contributions" />
+            <NavTab active={page === 'recurring'} onClick={() => setPage('recurring')} icon={<Repeat size={13} />} label="Recurring Dues" />
+            <NavTab active={page === 'campaigns'} onClick={() => setPage('campaigns')} icon={<Target size={13} />} label="Campaigns" />
+
+            <div className="h-4 w-px bg-brand-800/80 mx-1 flex-shrink-0" />
+
+            {/* Commercial & Spend */}
+            <NavTab active={page === 'invoices'} onClick={() => setPage('invoices')} icon={<FileText size={13} />} label="Invoices & AR" />
+            <NavTab active={page === 'bills'} onClick={() => setPage('bills')} icon={<Receipt size={13} />} label="Bills & AP" />
+            <NavTab active={page === 'procurement'} onClick={() => setPage('procurement')} icon={<Building2 size={13} />} label="Procurement" />
+            <NavTab active={page === 'expenses'} onClick={() => setPage('expenses')} icon={<ArrowUpRight size={13} />} label="Expenses & Splits" />
+            <NavTab active={page === 'reimbursements'} onClick={() => setPage('reimbursements')} icon={<Undo2 size={13} />} label="Reimbursements" />
+
+            <div className="h-4 w-px bg-brand-800/80 mx-1 flex-shrink-0" />
+
+            {/* Chama & Banking */}
+            <NavTab active={page === 'rosca'} onClick={() => setPage('rosca')} icon={<PiggyBank size={13} className={page === 'rosca' ? 'text-white' : 'text-amber-400'} />} label="Merry-Go-Round" />
+            <NavTab active={page === 'loans'} onClick={() => setPage('loans')} icon={<TrendingUp size={13} className={page === 'loans' ? 'text-white' : 'text-emerald-400'} />} label="Table Loans" />
+            <NavTab active={page === 'budgets'} onClick={() => setPage('budgets')} icon={<Activity size={13} />} label="Budget Variance" />
+
+            <div className="h-4 w-px bg-brand-800/80 mx-1 flex-shrink-0" />
+
+            {/* Treasury & Rails */}
+            <NavTab active={page === 'payments'} onClick={() => setPage('payments')} icon={<CreditCard size={13} />} label="Payments & Rails" />
+            <NavTab active={page === 'fx'} onClick={() => setPage('fx')} icon={<Globe size={13} className={page === 'fx' ? 'text-white' : 'text-cyan-400'} />} label="FX & Treasury" />
+            <NavTab active={page === 'agent'} onClick={() => setPage('agent')} icon={<Bot size={13} className={page === 'agent' ? 'text-white' : 'text-emerald-300'} />} label="Agentic Copilot" />
+
+            <div className="h-4 w-px bg-brand-800/80 mx-1 flex-shrink-0" />
+
+            {/* Governance & Ledger */}
+            <NavTab active={page === 'ledger'} onClick={() => setPage('ledger')} icon={<BookOpen size={13} className={page === 'ledger' ? 'text-white' : 'text-emerald-400'} />} label="Double-Entry Ledger" />
+            <NavTab active={page === 'accounts'} onClick={() => setPage('accounts')} icon={<Wallet size={13} className={page === 'accounts' ? 'text-white' : 'text-teal-400'} />} label="Accounts" />
+            <NavTab active={page === 'statements'} onClick={() => setPage('statements')} icon={<FileSpreadsheet size={13} />} label="Financial Statements" />
+            <NavTab active={page === 'anchors'} onClick={() => setPage('anchors')} icon={<Lock size={13} className={page === 'anchors' ? 'text-white' : 'text-cyan-400'} />} label="Soroban Anchors" />
+            <NavTab active={page === 'members'} onClick={() => setPage('members')} icon={<Users size={13} />} label="Members" />
+            <NavTab active={page === 'audit'} onClick={() => setPage('audit')} icon={<History size={13} />} label="Audit Trail" />
           </div>
 
-          <div className="hidden xl:flex items-center gap-2 py-1 flex-shrink-0 text-[10px] text-emerald-400/80 font-mono">
+          <div className="hidden 2xl:flex items-center gap-2 py-1 flex-shrink-0 text-[10px] text-emerald-400/80 font-mono ml-3">
             <span>{workspace?.country === 'ZA' ? 'Cape Town Node' : 'Nairobi Node'}</span>
             <span className="text-emerald-700">•</span>
             <span>IFRS Balanced</span>

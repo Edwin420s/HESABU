@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { env } from './config/env.js';
 import authRoutes from './modules/auth/auth.routes.js';
 import workspaceRoutes from './modules/workspaces/workspaces.routes.js';
@@ -29,7 +32,7 @@ import { prisma } from './config/prisma.js';
 export const app = express();
 // Trust single reverse proxy hop (Nginx) to prevent client-spoofed X-Forwarded-For headers
 app.set('trust proxy', 1);
-app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: env.CORS_ORIGIN.split(',').map(v => v.trim()), credentials: false }));
 app.use(express.json({
   limit: '1mb',
@@ -87,6 +90,17 @@ app.use('/api', reportsRouter);
 app.use('/api', invoicingRouter);
 app.use('/api', billsRouter);
 app.use('/api', procurementRouter);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distPath = path.resolve(__dirname, '../../frontend/dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
 
 app.use(notFound);
 app.use(errorHandler);
