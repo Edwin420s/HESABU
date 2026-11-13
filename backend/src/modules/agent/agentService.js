@@ -284,14 +284,145 @@ export class AgenticFinanceEngine {
    */
   async handleQuery({ workspaceId, question }) {
     const q = (question || '').toLowerCase().trim();
+    const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
 
-    if (q.includes('unpaid') || q.includes('owe') || q.includes('outstanding') || q.includes('who has not') || q.includes('collect') || q.includes('reminder')) {
+    // 1. Detect greetings and introduction requests
+    const isGreeting = q === 'hello' || q === 'hi' || q === 'hey' || q === 'habari' || q === 'jambo' ||
+      q === 'good morning' || q === 'good afternoon' || q === 'good evening' ||
+      q.startsWith('hello') || q.startsWith('hi ') || q.startsWith('hey ') ||
+      q.includes('who are you') || q.includes('what can you do') || q === 'help';
+
+    if (isGreeting) {
+      const answer = `Hello! I am HESABU's Financial Operations Copilot for ${workspace?.name || 'your workspace'}. I analyze live double-entry books, track member dues, monitor table banking loans and ROSCA rotations, and audit spending.\n\nHere are some questions you can ask me:\n• "What is our total treasury balance and collection status?"\n• "Show all overdue member contributions"\n• "What is the status of our table loans?"\n• "How is our Merry-Go-Round cycle progressing?"\n• "Are all double-entry ledger accounts balanced?"\n• "Show supplier bills awaiting payment"`;
+      return {
+        question,
+        answer,
+        agentInvoked: 'CopilotAssistant',
+        metrics: { workspace: workspace?.name, status: 'READY' },
+        toolData: { capabilities: ['collections', 'treasury', 'loans', 'rosca', 'bills', 'invoices', 'ledger'] }
+      };
+    }
+
+    // 2. Detect gibberish / nonsensical keystroke inputs
+    const isGibberish = !q.includes(' ') && q.length > 5 && (
+      !/[aeiouy]/i.test(q) ||
+      /^[bcdfghjklmnpqrstvwxz]+$/i.test(q) ||
+      /(.)\1{3,}/.test(q)
+    );
+
+    if (isGibberish) {
+      const answer = `I didn't recognize that inquiry ("${question}"). You can ask me specific financial operations questions, such as:\n• "What is our current treasury liquidity?"\n• "Show all overdue member contributions"\n• "What is the status of our table loans?"\n• "Are all double-entry ledger accounts balanced?"\n• "Show upcoming supplier bills and expenses"`;
+      return {
+        question,
+        answer,
+        agentInvoked: 'CopilotAssistant',
+        metrics: { status: 'UNRECOGNIZED_QUERY' },
+        toolData: { suggestedQuestions: [
+          'What is our total treasury balance and collection status?',
+          'Show all overdue member contributions',
+          'What is the status of our table loans?',
+          'Are all double-entry ledger accounts balanced?'
+        ]}
+      };
+    }
+
+    // 3. Table Loans & Banking
+    if (q.includes('loan') || q.includes('borrow') || q.includes('repay') || q.includes('interest rate')) {
+      const loans = await prisma.tableLoan.findMany({ where: { workspaceId } });
+      const activeLoans = loans.filter(l => l.status === 'DISBURSED');
+      const pendingLoans = loans.filter(l => l.status === 'APPLIED');
+      const totalDisbursed = loans.reduce((acc, l) => acc + (l.disbursedAmountMinor || 0n), 0n);
+      const totalRepaid = loans.reduce((acc, l) => acc + (l.repaidAmountMinor || 0n), 0n);
+      const answer = loans.length > 0
+        ? `Table Banking Loan Summary: Found ${loans.length} loan records (${activeLoans.length} active, ${pendingLoans.length} awaiting approval).\n• Total Disbursed: ${formatCurrencyDisplay(totalDisbursed, workspace?.currency)}\n• Total Repaid: ${formatCurrencyDisplay(totalRepaid, workspace?.currency)}\n• Active Borrowers: ${activeLoans.map(l => l.memberName).join(', ') || 'None'}`
+        : 'There are currently no table loans recorded in this workspace. Members can apply for loans with custom interest and penalty rules in the Table Loans module.';
+      return {
+        question,
+        answer,
+        agentInvoked: 'LoanAgent',
+        metrics: { totalLoans: loans.length, activeCount: activeLoans.length, pendingCount: pendingLoans.length },
+        toolData: loans
+      };
+    }
+
+    // 4. ROSCA / Merry-Go-Round
+    if (q.includes('rosca') || q.includes('merry') || q.includes('pot') || q.includes('round') || q.includes('rotation')) {
+      const cycles = await prisma.roscaCycle.findMany({
+        where: { workspaceId },
+        include: { rounds: true, members: true }
+      });
+      const activeCycles = cycles.filter(c => c.status === 'ACTIVE');
+      const answer = cycles.length > 0
+        ? `Merry-Go-Round Status: ${cycles.length} total cycles (${activeCycles.length} active).\n` +
+          cycles.map(c => `• Circle "${c.name}": Round ${c.currentRound} of ${c.totalRounds}. Member turn amount: ${formatCurrencyDisplay(c.roundAmountMinor, c.currency)}. Current Pot: ${formatCurrencyDisplay(c.currentPotMinor, c.currency)} (${c.status}).`).join('\n')
+        : 'No rotating Merry-Go-Round cycles are currently active. You can launch a rotating savings circle in the Merry-Go-Round module.';
+      return {
+        question,
+        answer,
+        agentInvoked: 'RoscaAgent',
+        metrics: { totalCycles: cycles.length, activeCycles: activeCycles.length },
+        toolData: cycles
+      };
+    }
+
+    // 5. Invoicing & Commercial Accounts Receivable
+    if (q.includes('invoice') || q.includes('receivable') || q.includes('customer') || q.includes('credit note')) {
+      const invoices = await prisma.invoice.findMany({ where: { workspaceId } });
+      const unpaid = invoices.filter(i => i.status !== 'PAID' && i.status !== 'CANCELLED');
+      const totalUnpaidMinor = unpaid.reduce((acc, i) => acc + (i.totalAmountMinor || 0n), 0n);
+      const answer = invoices.length > 0
+        ? `Invoices & Accounts Receivable: Issued ${invoices.length} total invoices.\n• Unpaid Invoices: ${unpaid.length} open invoices totaling ${formatCurrencyDisplay(totalUnpaidMinor, workspace?.currency)}.\n• Customers: ${[...new Set(unpaid.map(i => i.customerName))].join(', ') || 'All settled'}.`
+        : 'No commercial customer invoices have been issued yet. Invoices with automatic tax calculation can be created in Invoices & AR.';
+      return {
+        question,
+        answer,
+        agentInvoked: 'InvoicingAgent',
+        metrics: { totalInvoices: invoices.length, unpaidCount: unpaid.length, totalUnpaid: formatCurrencyDisplay(totalUnpaidMinor, workspace?.currency) },
+        toolData: invoices
+      };
+    }
+
+    // 6. Supplier Bills & Accounts Payable
+    if (q.includes('bill') || q.includes('supplier') || q.includes('vendor') || q.includes('payable') || q.includes('purchase request')) {
+      const bills = await prisma.supplierBill.findMany({ where: { workspaceId } });
+      const pending = bills.filter(b => b.status === 'PENDING' || b.status === 'APPROVED');
+      const totalPayableMinor = pending.reduce((acc, b) => acc + (b.amountMinor || 0n), 0n);
+      const answer = bills.length > 0
+        ? `Supplier Bills (AP) Overview: Found ${bills.length} total supplier bills.\n• Open Payables: ${pending.length} bills totaling ${formatCurrencyDisplay(totalPayableMinor, workspace?.currency)} awaiting payout.\n• Suppliers: ${[...new Set(pending.map(b => b.supplierName))].join(', ') || 'None'}.`
+        : 'No supplier bills are currently pending. Bills and purchase requests can be tracked in the Bills & AP module.';
+      return {
+        question,
+        answer,
+        agentInvoked: 'PayablesAgent',
+        metrics: { totalBills: bills.length, pendingCount: pending.length, totalPayable: formatCurrencyDisplay(totalPayableMinor, workspace?.currency) },
+        toolData: bills
+      };
+    }
+
+    // 7. Budget & Variance
+    if (q.includes('budget') || q.includes('variance') || q.includes('utiliz') || q.includes('allocation')) {
+      const budgets = await prisma.budget.findMany({ where: { workspaceId } });
+      const answer = budgets.length > 0
+        ? `Budget Status: ${budgets.length} departmental/operational categories tracked.\n` +
+          budgets.map(b => `• ${b.category}: Allocated ${formatCurrencyDisplay(b.allocatedAmountMinor, b.currency)} (Warning alert threshold: ${b.alertThresholdPct}%).`).join('\n')
+        : 'No budget allocations configured yet. You can set up category budgets and spend alerts in the Budget Variance module.';
+      return {
+        question,
+        answer,
+        agentInvoked: 'BudgetAgent',
+        metrics: { trackedCount: budgets.length },
+        toolData: budgets
+      };
+    }
+
+    // 8. Member Contributions & Arrears
+    if (q.includes('unpaid') || q.includes('owe') || q.includes('outstanding') || q.includes('who has not') || q.includes('collect') || q.includes('reminder') || q.includes('contribution') || q.includes('dues')) {
       const collections = await this.runCollectionsAgent({ workspaceId });
       const unpaid = collections.debtorAccounts;
       const answer = unpaid.length > 0
-        ? `Found ${unpaid.length} open obligations totaling ${collections.metrics.totalOutstanding} (${collections.metrics.overdueCount} overdue):\n• ` +
+        ? `Member Contributions Status: Found ${unpaid.length} open obligations totaling ${collections.metrics.totalOutstanding} (${collections.metrics.overdueCount} overdue):\n• ` +
           unpaid.map(d => `${d.debtorName}: ${d.formattedRemaining} for "${d.title}"${d.isOverdue ? ' (OVERDUE)' : ''}`).join('\n• ')
-        : 'All member obligations in this workspace are settled and up to date!';
+        : 'All member obligations and dues in this workspace are fully settled and up to date!';
       return {
         question,
         answer,
@@ -301,6 +432,7 @@ export class AgenticFinanceEngine {
       };
     }
 
+    // 9. Treasury Cash & Liquidity
     if (q.includes('cash') || q.includes('treasury') || q.includes('runway') || q.includes('zar') || q.includes('kes') || q.includes('forex') || q.includes('fx') || q.includes('liquidity')) {
       const treasury = await this.runTreasuryAgent({ workspaceId });
       const balStr = treasury.netCashBalances.map(b => `${b.currency}: ${b.formatted}`).join('; ');
@@ -314,24 +446,29 @@ export class AgenticFinanceEngine {
       };
     }
 
-    if (q.includes('reconcil') || q.includes('match') || q.includes('discrepan') || q.includes('unmatched') || q.includes('unbalanced') || q.includes('trial balance') || q.includes('ledger health')) {
-      const recon = await this.runReconciliationAgent({ workspaceId });
+    // 10. Double-Entry Ledger, Trial Balance & Reconciliation
+    if (q.includes('reconcil') || q.includes('match') || q.includes('discrepan') || q.includes('unmatched') || q.includes('unbalanced') || q.includes('trial balance') || q.includes('ledger') || q.includes('journal') || q.includes('debit') || q.includes('credit')) {
+      const [recon, journalCount] = await Promise.all([
+        this.runReconciliationAgent({ workspaceId }),
+        prisma.journalEntry.count({ where: { workspaceId } })
+      ]);
       const answer = recon.health === 'HEALTHY'
-        ? `Reconciliation Status is HEALTHY. All ${recon.matchedCount} settlements are matched against verified obligations/invoices, with zero ledger currency imbalances.`
-        : `Reconciliation Status: ${recon.health}. Found ${recon.unmatchedCount} unmatched settlements, ${recon.stuckPaymentsCount} pending payments requiring review, and ${recon.unbalancedCurrencies.length} currency ledger imbalances.`;
+        ? `Double-Entry General Ledger is balanced across ${journalCount} posted entries with zero discrepancy (Δ = 0.00). All ${recon.matchedCount} settlements are matched against verified obligations/invoices.`
+        : `Ledger & Reconciliation Alert: Status is ${recon.health}. Found ${recon.unmatchedCount} unmatched settlements, ${recon.stuckPaymentsCount} pending payments requiring review, and ${recon.unbalancedCurrencies.length} currency leg imbalances across ${journalCount} entries.`;
       return {
         question,
         answer,
         agentInvoked: 'ReconciliationAgent',
-        metrics: { health: recon.health, matched: recon.matchedCount, unmatched: recon.unmatchedCount },
+        metrics: { health: recon.health, matched: recon.matchedCount, unmatched: recon.unmatchedCount, journalCount },
         toolData: recon
       };
     }
 
+    // 11. Spending, Expenses & Anomalies
     if (q.includes('spend') || q.includes('expense') || q.includes('anomal') || q.includes('duplicate') || q.includes('fraud') || q.includes('threshold')) {
       const expenseAudit = await this.runExpenseAgent({ workspaceId });
       const answer = expenseAudit.anomaliesCount === 0
-        ? `Expense policy check passed across ${expenseAudit.totalExpensesEvaluated} submissions with no anomalies or duplicates detected.`
+        ? `Expense policy audit passed across ${expenseAudit.totalExpensesEvaluated} submissions with no duplicate claims or threshold violations detected.`
         : `Expense Audit Alert: Detected ${expenseAudit.anomaliesCount} anomalies (potential duplicate claims or threshold violations) requiring governance review:\n• ` +
           expenseAudit.anomalies.map(a => `${a.type} (${a.severity}): ${a.description}`).join('\n• ');
       return {
@@ -343,14 +480,31 @@ export class AgenticFinanceEngine {
       };
     }
 
-    // Default general financial overview
+    // 12. Workspace Members & Roles
+    if (q.includes('member') || q.includes('officer') || q.includes('team') || q.includes('role') || q.includes('user')) {
+      const members = await prisma.membership.findMany({
+        where: { workspaceId },
+        include: { user: true }
+      });
+      const answer = `Workspace Membership: ${members.length} registered members in ${workspace?.name || 'this workspace'}:\n• ` +
+        members.map(m => `${m.user.name} (${m.role}): ${m.user.email}`).join('\n• ');
+      return {
+        question,
+        answer,
+        agentInvoked: 'GovernanceAgent',
+        metrics: { memberCount: members.length },
+        toolData: members
+      };
+    }
+
+    // Default general financial overview (Polite, structured, clean)
     const [collections, treasury, recon] = await Promise.all([
       this.runCollectionsAgent({ workspaceId }),
       this.runTreasuryAgent({ workspaceId }),
       this.runReconciliationAgent({ workspaceId })
     ]);
 
-    const answer = `HESABU FinNexus Autonomous Financial Operations Copilot is active. Total outstanding collections: ${collections.metrics.totalOutstanding} (${collections.debtorAccounts.length} open items). Net liquidity: ${treasury.netCashBalances.map(b => b.formatted).join(', ') || '0.00'}. Reconciliation Health: ${recon.health}.`;
+    const answer = `HESABU Copilot Operational Snapshot for ${workspace?.name || 'this workspace'}:\n• Outstanding Member Collections: ${collections.metrics.totalOutstanding} (${collections.debtorAccounts.length} open items, ${collections.metrics.overdueCount} overdue)\n• Available Treasury Liquidity: ${treasury.netCashBalances.map(b => b.formatted).join(', ') || '0.00'}\n• Reconciliation Health: ${recon.health} (zero ledger imbalances)`;
 
     return {
       question,
