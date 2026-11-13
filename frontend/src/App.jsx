@@ -430,7 +430,7 @@ function QuickPaymentModal({ workspace, currency, obligations = [], onClose, onS
             type="button"
             disabled={busy}
             onClick={handleSettle}
-            className="px-4 py-2 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs shadow"
+            className="px-4 py-2 rounded bg-brand-900 hover:bg-brand-800 text-white font-bold text-xs shadow cursor-pointer"
           >
             {busy ? 'Processing...' : 'Execute & Verify Settlement'}
           </button>
@@ -701,7 +701,7 @@ function App() {
             <NavTab active={page === 'accounts'} onClick={() => setPage('accounts')} icon={<Wallet size={14} className="text-teal-400" />} label="Chart of Accounts" />
             <NavTab active={page === 'statements'} onClick={() => setPage('statements')} icon={<FileSpreadsheet size={14} />} label="Statements" />
             <NavTab active={page === 'anchors'} onClick={() => setPage('anchors')} icon={<Lock size={14} className="text-cyan-400" />} label="Soroban Anchors" />
-            <NavTab active={page === 'agent'} onClick={() => setPage('agent')} icon={<Bot size={14} className="text-purple-300" />} label="AI Copilot" />
+            <NavTab active={page === 'agent'} onClick={() => setPage('agent')} icon={<Bot size={14} className="text-emerald-300" />} label="AI Copilot" />
             <NavTab active={page === 'procurement'} onClick={() => setPage('procurement')} icon={<Building2 size={14} />} label="Procurement" />
             <NavTab active={page === 'budgets'} onClick={() => setPage('budgets')} icon={<Target size={14} />} label="Budgets" />
             <NavTab active={page === 'members'} onClick={() => setPage('members')} icon={<Users size={14} />} label="Members" />
@@ -1149,12 +1149,12 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
   return (
     <div className="space-y-6">
       {/* Top Operational Hero Card from HESABU 2.0 Design */}
-      <div className="bg-gradient-to-r from-brand-950 via-brand-900 to-emerald-950 rounded-xl p-6 text-white border border-brand-800/80 shadow-lg relative overflow-hidden">
-        <div className="absolute -right-8 -bottom-10 w-72 h-72 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+      <div className="bg-gradient-to-r from-brand-950 via-brand-900 to-brand-950 rounded-xl p-6 text-white border border-brand-800/80 shadow-lg relative overflow-hidden">
+        <div className="absolute -right-8 -bottom-10 w-72 h-72 bg-brand-500/10 rounded-full blur-3xl pointer-events-none"></div>
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-mono font-semibold border border-emerald-500/30">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-brand-500/20 text-emerald-300 text-[11px] font-mono font-semibold border border-brand-500/30">
+              <span className="w-2 h-2 rounded-full bg-brand-500 animate-pulse"></span>
               MULTI-TENANT TREASURY ACTIVE
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight font-sans">
@@ -1169,7 +1169,7 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
           <div className="flex flex-wrap items-center gap-2.5">
             <button
               onClick={() => setModal('obligation')}
-              className="bg-emerald-500 hover:bg-emerald-400 text-brand-950 font-bold px-3.5 py-2 rounded-lg text-xs transition flex items-center gap-1.5 shadow cursor-pointer"
+              className="bg-brand-500 hover:bg-brand-400 text-brand-950 font-bold px-3.5 py-2 rounded-lg text-xs transition flex items-center gap-1.5 shadow cursor-pointer"
             >
               <Plus size={15} />
               <span>+ Record Dues</span>
@@ -1188,7 +1188,7 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
             </button>
             <button
               onClick={() => setPage('agent')}
-              className="bg-purple-900/70 hover:bg-purple-800 text-purple-200 font-medium px-3.5 py-2 rounded-lg text-xs transition border border-purple-700/60 flex items-center gap-1.5 cursor-pointer"
+              className="bg-brand-800 hover:bg-brand-700 text-emerald-200 font-medium px-3.5 py-2 rounded-lg text-xs transition border border-brand-700/80 flex items-center gap-1.5 cursor-pointer"
             >
               <span>🤖 Query Copilot</span>
             </button>
@@ -1213,9 +1213,9 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
             <div className="text-[11px] text-emerald-200/60">Atomic GAAP posting: debits = credits</div>
           </div>
           <div onClick={() => setPage('anchors')} className="cursor-pointer bg-brand-900/60 hover:bg-brand-800/80 p-3 rounded-lg border border-brand-700/50 transition">
-            <span className="text-[10px] font-mono text-cyan-400 font-bold">STAGE 04</span>
+            <span className="text-[10px] font-mono text-emerald-400 font-bold">STAGE 04</span>
             <div className="font-bold text-white mt-0.5">Cryptographic Anchor</div>
-            <div className="text-[11px] text-cyan-200/60">Soroban contract Merkle root proof</div>
+            <div className="text-[11px] text-emerald-200/60">Soroban contract Merkle root proof</div>
           </div>
         </div>
       </div>
@@ -1423,20 +1423,20 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
           </div>
 
           {/* Mini Copilot Widget */}
-          <div className="bg-gradient-to-br from-purple-950 to-brand-950 rounded-xl p-5 text-white shadow-sm space-y-3 border border-purple-800/40">
+          <div className="bg-gradient-to-br from-brand-900 to-brand-950 rounded-xl p-5 text-white shadow-sm space-y-3 border border-brand-700/60 relative overflow-hidden">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="text-base">🤖</span>
                 <span className="font-bold text-xs tracking-wide">Autonomous Financial Copilot</span>
               </div>
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-900/80 text-purple-300 border border-purple-700">ONLINE</span>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-brand-800 text-emerald-300 border border-brand-700">ONLINE</span>
             </div>
-            <p className="text-xs text-purple-200/80 leading-relaxed">
+            <p className="text-xs text-emerald-100/90 leading-relaxed">
               "All member obligations have settled. Round 4 Merry-go-round payout of KES 120,000 to Brian Otieno is ready for 2-officer authorization."
             </p>
             <button
               onClick={() => setPage('agent')}
-              className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow"
+              className="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-2 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow"
             >
               <span>Launch Conversational Inquiry</span>
               <ArrowRight size={14} />
@@ -1450,7 +1450,7 @@ function Overview({ workspace, summary, obligations = [], campaigns = [], expens
         <div className="jump-card cursor-pointer" onClick={() => setPage('rosca')}>
           <div>
             <div className="jump-card-top">
-              <div className="jump-card-icon purple">
+              <div className="jump-card-icon">
                 <Repeat size={16} />
               </div>
               <span className="status status-settled">{rosca?.length || 0} Cycles</span>

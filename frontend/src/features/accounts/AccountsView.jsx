@@ -89,9 +89,9 @@ export function AccountsView({ workspaceId, currency, setNotice }) {
           <div className="text-xl font-extrabold text-blue-800 mt-0.5">{liabilityCount}</div>
           <span className="text-xs text-slate-600 font-medium">Liabilities</span>
         </div>
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-emerald-500 transition" onClick={() => setFilterType('EQUITY')}>
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-brand-600 transition" onClick={() => setFilterType('EQUITY')}>
           <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">3000 Series</span>
-          <div className="text-xl font-extrabold text-purple-800 mt-0.5">{equityCount}</div>
+          <div className="text-xl font-extrabold text-brand-900 mt-0.5">{equityCount}</div>
           <span className="text-xs text-slate-600 font-medium">Equity</span>
         </div>
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-emerald-500 transition" onClick={() => setFilterType('REVENUE')}>
@@ -180,7 +180,7 @@ export function AccountsView({ workspaceId, currency, setNotice }) {
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                           acc.type === 'ASSET' ? 'bg-emerald-100 text-emerald-800' :
                           acc.type === 'LIABILITY' ? 'bg-blue-100 text-blue-800' :
-                          acc.type === 'EQUITY' ? 'bg-purple-100 text-purple-800' :
+                          acc.type === 'EQUITY' ? 'bg-surface-200 text-brand-900 border border-surface-300' :
                           acc.type === 'REVENUE' ? 'bg-teal-100 text-teal-800' :
                           'bg-amber-100 text-amber-800'
                         }`}>

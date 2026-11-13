@@ -511,7 +511,7 @@ export function LandingPage({ onEnterApp, user, onLoginClick }) {
             </div>
 
             <div className="landing-feature-card">
-              <div className="landing-feature-icon-box bg-purple-50 text-purple-700">
+              <div className="landing-feature-icon-box bg-brand-50 text-brand-800">
                 <Bot size={22} />
               </div>
               <h3>Agentic Treasury Copilot</h3>
