@@ -6,7 +6,7 @@ export function FxView({ workspaceId, currency, setNotice }) {
   const [rates, setRates] = useState({});
   const [fromCurr, setFromCurr] = useState('KES');
   const [toCurr, setToCurr] = useState('ZAR');
-  const [calcAmount, setCalcAmount] = useState('10000.00');
+  const [calcAmount, setCalcAmount] = useState('');
   const [calcResult, setCalcResult] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -16,6 +16,7 @@ export function FxView({ workspaceId, currency, setNotice }) {
 
   async function handleConvert(e) {
     if (e) e.preventDefault();
+    if (!calcAmount || parseFloat(calcAmount) <= 0) return;
     setBusy(true);
     try {
       const decimals = (fromCurr === 'UGX' || fromCurr === 'TZS') ? 0 : 2;
@@ -48,21 +49,21 @@ export function FxView({ workspaceId, currency, setNotice }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '14px' }}>
         <div className="metric-card">
           <small>1 USD → KES</small>
-          <strong>{rates.KES?.rateToUsd ? `KES ${rates.KES.rateToUsd.toFixed(2)}` : '130.00'}</strong>
+          <strong>{rates.KES?.rateToUsd ? `KES ${rates.KES.rateToUsd.toFixed(2)}` : '—'}</strong>
         </div>
         <div className="metric-card">
           <small>1 USD → ZAR</small>
-          <strong>{rates.ZAR?.rateToUsd ? `ZAR ${rates.ZAR.rateToUsd.toFixed(2)}` : '18.20'}</strong>
+          <strong>{rates.ZAR?.rateToUsd ? `ZAR ${rates.ZAR.rateToUsd.toFixed(2)}` : '—'}</strong>
         </div>
         <div className="metric-card">
           <small>1 ZAR → KES (Cross)</small>
           <strong>
-            {rates.KES && rates.ZAR ? `KES ${(rates.KES.rateToUsd / rates.ZAR.rateToUsd).toFixed(2)}` : '7.14'}
+            {rates.KES && rates.ZAR ? `KES ${(rates.KES.rateToUsd / rates.ZAR.rateToUsd).toFixed(2)}` : '—'}
           </strong>
         </div>
         <div className="metric-card">
           <small>1 EUR → USD</small>
-          <strong>{rates.EUR?.rateToUsd ? `$${(1 / rates.EUR.rateToUsd).toFixed(2)}` : '$1.08'}</strong>
+          <strong>{rates.EUR?.rateToUsd ? `$${(1 / rates.EUR.rateToUsd).toFixed(2)}` : '—'}</strong>
         </div>
       </div>
 
@@ -101,7 +102,7 @@ export function FxView({ workspaceId, currency, setNotice }) {
           </div>
 
           <Field label={`Amount to Convert in ${fromCurr}`}>
-            <input type="number" required value={calcAmount} onChange={e => setCalcAmount(e.target.value)} />
+            <input type="number" step="0.01" required value={calcAmount} onChange={e => setCalcAmount(e.target.value)} placeholder="e.g. 10000.00" />
           </Field>
 
           <button className="primary" disabled={busy}>

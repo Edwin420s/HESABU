@@ -13,7 +13,7 @@ export function BillsView({ workspaceId, currency, setNotice, refresh }) {
   // New Bill Form
   const [supplierId, setSupplierId] = useState('');
   const [billNumber, setBillNumber] = useState(`BILL-${Date.now().toString().slice(-6)}`);
-  const [amount, setAmount] = useState('2500.00');
+  const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('OPERATING');
   const [dueDate, setDueDate] = useState(new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
@@ -253,7 +253,7 @@ export function BillsView({ workspaceId, currency, setNotice, refresh }) {
                 <input required value={billNumber} onChange={e => setBillNumber(e.target.value)} />
               </Field>
               <Field label={`Amount (${currency})`}>
-                <input required value={amount} onChange={e => setAmount(e.target.value)} />
+                <input required type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="e.g. 2500.00" />
               </Field>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>

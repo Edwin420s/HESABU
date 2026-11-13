@@ -12,7 +12,7 @@ export function ProcurementView({ workspaceId, currency, setNotice, refresh }) {
   // New Request Form
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [amount, setAmount] = useState('5000.00');
+  const [amount, setAmount] = useState('');
   const [department, setDepartment] = useState('OPERATIONS');
 
   function loadData() {
@@ -144,7 +144,7 @@ export function ProcurementView({ workspaceId, currency, setNotice, refresh }) {
             </Field>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <Field label={`Estimated Amount (${currency})`}>
-                <input required value={amount} onChange={e => setAmount(e.target.value)} />
+                <input required type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="e.g. 5000.00" />
               </Field>
               <Field label="Department">
                 <select value={department} onChange={e => setDepartment(e.target.value)}>

@@ -1,16 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus } from 'lucide-react';
 import { api, money } from '../../api';
 import { PageHeader, Field, Modal } from '../shared/CommonComponents';
 
-export function RoscaView({ workspaceId, cycles, refresh, setNotice, currency }) {
+export function RoscaView({ workspaceId, cycles, refresh, setNotice, currency, members = [] }) {
   const [modal, setModal] = useState(false);
   const [name, setName] = useState('');
-  const [amount, setAmount] = useState('5000');
+  const [amount, setAmount] = useState('');
+  const [selectedMembers, setSelectedMembers] = useState([]);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (members && members.length > 0) {
+      setSelectedMembers(members.map(m => m.id));
+    }
+  }, [members]);
 
   async function createCycle(e) {
     e.preventDefault();
+    if (selectedMembers.length < 2) {
+      setNotice('A Merry-Go-Round cycle requires at least 2 participating members.');
+      return;
+    }
     setBusy(true);
     try {
       await api(`/workspaces/${workspaceId}/rosca`, {
@@ -18,10 +29,12 @@ export function RoscaView({ workspaceId, cycles, refresh, setNotice, currency })
         body: JSON.stringify({
           name,
           contributionPerMemberMinor: Math.round(parseFloat(amount) * 100),
-          memberIds: ['m_admin', 'm_treasurer', 'm_member_1'],
+          memberIds: selectedMembers,
         }),
       });
       setModal(false);
+      setName('');
+      setAmount('');
       refresh();
       setNotice('ROSCA Merry-Go-Round cycle created successfully');
     } catch (err) {
@@ -75,9 +88,36 @@ export function RoscaView({ workspaceId, cycles, refresh, setNotice, currency })
               <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. 2026 Monthly Rotation" />
             </Field>
             <Field label={`Contribution per Member (${currency})`}>
-              <input type="number" required value={amount} onChange={(e) => setAmount(e.target.value)} />
+              <input type="number" required step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 5000" />
             </Field>
-            <button className="primary" disabled={busy}>{busy ? 'Creating...' : 'Launch Cycle'}</button>
+            <Field label="Participating Members (minimum 2)">
+              {members.length === 0 ? (
+                <p className="tiny subtle">No workspace members found. Add members to your workspace first.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '160px', overflowY: 'auto', padding: '8px', border: '1px solid #e2e8f0', borderRadius: '6px' }}>
+                  {members.map(m => (
+                    <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedMembers.includes(m.id)}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setSelectedMembers(prev => [...prev, m.id]);
+                          } else {
+                            setSelectedMembers(prev => prev.filter(id => id !== m.id));
+                          }
+                        }}
+                      />
+                      <span>{m.user?.name || m.user?.email || m.id}</span>
+                      <span className="quiet-tag">{m.role}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </Field>
+            <button className="primary" disabled={busy || selectedMembers.length < 2}>
+              {busy ? 'Creating...' : `Launch Cycle (${selectedMembers.length} members)`}
+            </button>
           </form>
         </Modal>
       )}

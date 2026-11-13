@@ -15,7 +15,7 @@ export function InvoicesView({ workspaceId, currency, setNotice, refresh }) {
   const [customerId, setCustomerId] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState(`INV-${Date.now().toString().slice(-6)}`);
   const [dueDate, setDueDate] = useState(new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]);
-  const [lines, setLines] = useState([{ description: 'Consulting Services', quantity: 1, unitPrice: '1000' }]);
+  const [lines, setLines] = useState([{ description: '', quantity: 1, unitPrice: '' }]);
 
   // New Customer Form
   const [custForm, setCustForm] = useState({ name: '', email: '', phone: '', taxId: '', address: '' });
@@ -26,7 +26,7 @@ export function InvoicesView({ workspaceId, currency, setNotice, refresh }) {
   const [settleAmount, setSettleAmount] = useState('');
 
   // Credit Note Form
-  const [cnReason, setCnReason] = useState('Service adjustment / goodwill credit');
+  const [cnReason, setCnReason] = useState('');
   const [cnAmount, setCnAmount] = useState('');
 
   function loadData() {
@@ -365,7 +365,7 @@ export function InvoicesView({ workspaceId, currency, setNotice, refresh }) {
           <form onSubmit={issueCreditNote} className="stack">
             <p className="subtle">Issue a formal credit note reducing the accounts receivable balance.</p>
             <Field label="Credit Reason / Description">
-              <input required value={cnReason} onChange={e => setCnReason(e.target.value)} />
+              <input required value={cnReason} onChange={e => setCnReason(e.target.value)} placeholder="e.g. Service adjustment / billing correction" />
             </Field>
             <Field label="Credit Amount (Excl. VAT)">
               <input type="number" step="0.01" required value={cnAmount} onChange={e => setCnAmount(e.target.value)} />

@@ -21,7 +21,7 @@ import {
 
 function Auth({ onAuth }) {
   const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ name: '', email: 'demo@hesabu.local', password: 'HesabuDemo!2026' });
+  const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -45,14 +45,14 @@ function Auth({ onAuth }) {
         <form onSubmit={submit} className="stack">
           {mode === 'register' && (
             <Field label="Full name">
-              <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+              <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Your full name" />
             </Field>
           )}
           <Field label="Email">
-            <input type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+            <input type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="name@company.com" />
           </Field>
           <Field label="Password">
-            <input type="password" required minLength="10" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+            <input type="password" required minLength="10" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••••••" />
           </Field>
           {error && <p className="error">{error}</p>}
           <button className="primary full" disabled={busy}>
@@ -62,7 +62,6 @@ function Auth({ onAuth }) {
         <button className="text-button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
           {mode === 'login' ? 'New to HESABU? Create an account' : 'Already registered? Sign in'}
         </button>
-        <p className="tiny">Demo credentials: demo@hesabu.local · HesabuDemo!2026</p>
       </div>
     </div>
   );
@@ -331,7 +330,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
   }
 
   const currency = workspace?.currency || 'KES';
-  const modalUI = <Modal type={modal} onClose={() => setModal('')} busy={busy} onSubmit={create} members={workspace?.memberships} />;
+  const modalUI = <Modal type={modal} onClose={() => setModal('')} busy={busy} onSubmit={create} members={workspace?.memberships} currency={currency} />;
   const payModalUI = payModal && (
     <PaymentInitModal
       obligation={payModal}
@@ -440,7 +439,7 @@ function WorkspacePage({ page, workspace, workspaceId, refresh, setNotice }) {
     );
   }
   if (page === 'rosca') {
-    return <RoscaView workspaceId={workspaceId} cycles={data.rosca || []} refresh={refresh} setNotice={setNotice} currency={currency} />;
+    return <RoscaView workspaceId={workspaceId} cycles={data.rosca || []} refresh={refresh} setNotice={setNotice} currency={currency} members={workspace?.memberships || []} />;
   }
   if (page === 'loans') {
     return <LoansView workspaceId={workspaceId} loans={data.loans || []} refresh={refresh} setNotice={setNotice} currency={currency} />;
@@ -1370,28 +1369,32 @@ function LedgerView({ entries, currency, refresh, setNotice }) {
 function FxConverterCard() {
   const [fromCurr, setFromCurr] = useState('USD');
   const [toCurr, setToCurr] = useState('KES');
-  const [amount, setAmount] = useState('100');
+  const [amount, setAmount] = useState('');
   const [conversion, setConversion] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const val = parseFloat(amount);
-    if (isNaN(val) || val <= 0) return;
-    const decimals = (fromCurr === 'UGX' || fromCurr === 'TZS') ? 1 : 100;
-    const amountMinor = Math.round(val * decimals);
+    if (isNaN(val) || val <= 0) {
+      setConversion(null);
+      return;
+    }
+    const decimals = (fromCurr === 'UGX' || fromCurr === 'TZS') ? 0 : 2;
+    const amountMinor = Math.round(val * Math.pow(10, decimals));
 
     setLoading(true);
-    fetch('/api/fx/convert', {
+    api('/fx/convert', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ amountMinor, fromCurrency: fromCurr, toCurrency: toCurr })
     })
-      .then(r => r.json())
       .then(d => {
         setConversion(d);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        setConversion(null);
+        setLoading(false);
+      });
   }, [fromCurr, toCurr, amount]);
 
   return (
@@ -1410,13 +1413,15 @@ function FxConverterCard() {
           <div style={{ display: 'flex', gap: '6px' }}>
             <select value={fromCurr} onChange={e => setFromCurr(e.target.value)} style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}>
               <option value="USD">USD</option>
+              <option value="KES">KES</option>
+              <option value="ZAR">ZAR</option>
               <option value="EUR">EUR</option>
               <option value="GBP">GBP</option>
-              <option value="KES">KES</option>
               <option value="UGX">UGX</option>
             </select>
             <input
               type="number"
+              placeholder="e.g. 100"
               value={amount}
               onChange={e => setAmount(e.target.value)}
               style={{ width: '100px', padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
@@ -1428,6 +1433,7 @@ function FxConverterCard() {
           <label style={{ fontSize: '11px', display: 'block', color: '#64748b', marginBottom: '4px' }}>To Currency</label>
           <select value={toCurr} onChange={e => setToCurr(e.target.value)} style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', width: '100%' }}>
             <option value="KES">KES (Kenya Shilling)</option>
+            <option value="ZAR">ZAR (South African Rand)</option>
             <option value="USD">USD (US Dollar)</option>
             <option value="EUR">EUR (Euro)</option>
             <option value="GBP">GBP (British Pound)</option>
@@ -1438,7 +1444,7 @@ function FxConverterCard() {
         <div style={{ background: '#f8fafc', padding: '10px 16px', borderRadius: '6px', border: '1px solid #e2e8f0', textAlign: 'right' }}>
           <span style={{ fontSize: '11px', color: '#64748b' }}>Estimated Settlement</span>
           <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#0f172a' }}>
-            {loading ? 'Calculating...' : conversion ? `${toCurr} ${(conversion.targetAmountMinor / ((toCurr === 'UGX' || toCurr === 'TZS') ? 1 : 100)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+            {loading ? 'Calculating...' : conversion ? `${toCurr} ${(conversion.targetAmountMinor / ((toCurr === 'UGX' || toCurr === 'TZS') ? 1 : 100)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
           </div>
           {conversion && <small style={{ fontSize: '11px', color: '#94a3b8' }}>Rate: 1 {fromCurr} = {conversion.exchangeRate} {toCurr}</small>}
         </div>
@@ -1718,7 +1724,7 @@ function Reports({ workspaceId }) {
   );
 }
 
-function Modal({ type, onClose, onSubmit, busy, members }) {
+function Modal({ type, onClose, onSubmit, busy, members, currency = 'KES' }) {
   const [form, setForm] = useState({
     title: '',
     description: '',
@@ -1829,7 +1835,7 @@ function Modal({ type, onClose, onSubmit, busy, members }) {
 
           {type === 'campaign' && (
             <>
-              <Field label="Fundraising Target (KES)">
+              <Field label={`Fundraising Target (${currency})`}>
                 <input required type="number" step="0.01" value={form.target} onChange={e => setForm({ ...form, target: e.target.value })} placeholder="e.g. 100000" />
               </Field>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
@@ -1887,7 +1893,7 @@ function Modal({ type, onClose, onSubmit, busy, members }) {
           )}
 
           {(type === 'obligation' || type === 'expense' || type === 'reimbursement' || type === 'recurring') && (
-            <Field label="Amount (KES)">
+            <Field label={`Amount (${currency})`}>
               <input required inputMode="decimal" placeholder="e.g. 2500.00" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} />
             </Field>
           )}

@@ -5,9 +5,9 @@ import { PageHeader, Field, Modal } from '../shared/CommonComponents';
 
 export function LoansView({ workspaceId, loans, refresh, setNotice, currency }) {
   const [modal, setModal] = useState(false);
-  const [principal, setPrincipal] = useState('20000');
+  const [principal, setPrincipal] = useState('');
   const [duration, setDuration] = useState('6');
-  const [rate, setRate] = useState('10');
+  const [rate, setRate] = useState('');
   const [type, setType] = useState('FLAT');
   const [busy, setBusy] = useState(false);
 
@@ -25,6 +25,8 @@ export function LoansView({ workspaceId, loans, refresh, setNotice, currency }) 
         }),
       });
       setModal(false);
+      setPrincipal('');
+      setRate('');
       refresh();
       setNotice('Loan application submitted for approval');
     } catch (err) {
@@ -82,13 +84,13 @@ export function LoansView({ workspaceId, loans, refresh, setNotice, currency }) 
         <Modal title="Apply for Table Banking Loan" onClose={() => setModal(false)}>
           <form onSubmit={applyLoan} className="stack">
             <Field label={`Principal Amount (${currency})`}>
-              <input type="number" required value={principal} onChange={(e) => setPrincipal(e.target.value)} />
+              <input type="number" required step="0.01" value={principal} onChange={(e) => setPrincipal(e.target.value)} placeholder="e.g. 50000" />
             </Field>
             <Field label="Duration (Months)">
-              <input type="number" min="1" max="36" required value={duration} onChange={(e) => setDuration(e.target.value)} />
+              <input type="number" min="1" max="36" required value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="e.g. 6" />
             </Field>
             <Field label="Annual Interest Rate (%)">
-              <input type="number" required value={rate} onChange={(e) => setRate(e.target.value)} />
+              <input type="number" step="0.1" required value={rate} onChange={(e) => setRate(e.target.value)} placeholder="e.g. 12" />
             </Field>
             <Field label="Interest Calculation Model">
               <select value={type} onChange={(e) => setType(e.target.value)}>
