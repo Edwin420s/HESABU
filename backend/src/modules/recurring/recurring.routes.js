@@ -71,6 +71,19 @@ router.post('/recurring/:id/trigger', asyncHandler(async (req, res) => {
     throw new AppError('Permission required to trigger schedule.', 403);
   }
 
+  // Idempotency check: prevent duplicate triggers within same run interval unless force=true
+  const now = new Date();
+  if (schedule.lastRunAt && req.query.force !== 'true') {
+    const elapsedMs = now.getTime() - new Date(schedule.lastRunAt).getTime();
+    const minIntervalMs = schedule.frequency === 'WEEKLY' ? 6 * 86400000 : schedule.frequency === 'MONTHLY' ? 25 * 86400000 : 75 * 86400000;
+    if (elapsedMs < minIntervalMs) {
+      throw new AppError(
+        `Recurring schedule was already triggered on ${new Date(schedule.lastRunAt).toISOString().split('T')[0]}. Next run scheduled for ${new Date(schedule.nextRunAt).toISOString().split('T')[0]}. Set ?force=true to override.`,
+        400
+      );
+    }
+  }
+
   const members = await prisma.membership.findMany({
     where: { workspaceId: schedule.workspaceId },
     include: { user: true }
@@ -93,11 +106,14 @@ router.post('/recurring/:id/trigger', asyncHandler(async (req, res) => {
     created.push(ob);
   }
 
-  // Advance nextRunAt
+  // Advance nextRunAt and record lastRunAt
   const days = schedule.frequency === 'WEEKLY' ? 7 : schedule.frequency === 'MONTHLY' ? 30 : 90;
   await prisma.recurringSchedule.update({
     where: { id: schedule.id },
-    data: { nextRunAt: new Date(Date.now() + days * 86400000) }
+    data: {
+      lastRunAt: now,
+      nextRunAt: new Date(Date.now() + days * 86400000)
+    }
   });
 
   res.json({ generatedCount: created.length, obligations: jsonSafe(created) });

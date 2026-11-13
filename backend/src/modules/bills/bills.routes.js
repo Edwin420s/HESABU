@@ -14,12 +14,23 @@ billsRouter.use(authenticate);
 // Suppliers
 // -------------------------------------------------------------
 billsRouter.get('/workspaces/:workspaceId/suppliers', requireWorkspaceRole, asyncHandler(async (req, res) => {
+  const isFinanceOfficer = ['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(req.membership.role);
   const suppliers = await prisma.supplier.findMany({
     where: { workspaceId: req.params.workspaceId },
     include: { bills: true },
     orderBy: { createdAt: 'desc' }
   });
-  res.json({ suppliers: jsonSafe(suppliers) });
+
+  const sanitized = suppliers.map(s => {
+    if (isFinanceOfficer) return s;
+    return {
+      ...s,
+      bankAccount: s.bankAccount ? `****${s.bankAccount.slice(-4)}` : null,
+      taxId: s.taxId ? `****${s.taxId.slice(-4)}` : null
+    };
+  });
+
+  res.json({ suppliers: jsonSafe(sanitized) });
 }));
 
 billsRouter.post('/workspaces/:workspaceId/suppliers', requireWorkspaceRole, allowRoles('OWNER', 'ADMIN', 'FINANCE_MANAGER'), asyncHandler(async (req, res) => {

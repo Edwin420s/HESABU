@@ -21,12 +21,22 @@ invoicingRouter.use(authenticate);
 // Customers
 // -------------------------------------------------------------
 invoicingRouter.get('/workspaces/:workspaceId/customers', requireWorkspaceRole, asyncHandler(async (req, res) => {
+  const isFinanceOfficer = ['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(req.membership.role);
   const customers = await prisma.customer.findMany({
     where: { workspaceId: req.params.workspaceId },
     include: { invoices: true },
     orderBy: { createdAt: 'desc' }
   });
-  res.json({ customers: jsonSafe(customers) });
+
+  const sanitized = customers.map(c => {
+    if (isFinanceOfficer) return c;
+    return {
+      ...c,
+      taxNumber: c.taxNumber ? `****${c.taxNumber.slice(-4)}` : null
+    };
+  });
+
+  res.json({ customers: jsonSafe(sanitized) });
 }));
 
 invoicingRouter.post('/workspaces/:workspaceId/customers', requireWorkspaceRole, allowRoles('OWNER', 'ADMIN', 'FINANCE_MANAGER'), asyncHandler(async (req, res) => {

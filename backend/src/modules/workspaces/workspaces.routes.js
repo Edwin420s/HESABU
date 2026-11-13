@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../config/prisma.js';
 import { AppError, asyncHandler } from '../../shared/errors.js';
 import { authenticate, requireWorkspaceRole, allowRoles } from '../../middleware/auth.js';
+import { initializeWorkspaceChartOfAccounts } from '../finance/chartOfAccounts.js';
 
 const router = Router();
 router.use(authenticate);
@@ -44,6 +45,21 @@ router.post('/', asyncHandler(async (req, res) => {
       memberships: { create: { userId: req.user.id, role: 'OWNER' } }
     }
   });
+
+  // Authoritative Chart of Accounts initialization per workspace
+  await initializeWorkspaceChartOfAccounts(workspace.id, currency);
+
+  await prisma.auditLog.create({
+    data: {
+      workspaceId: workspace.id,
+      actorId: req.user.id,
+      action: 'WORKSPACE_CREATED',
+      entityType: 'Workspace',
+      entityId: workspace.id,
+      details: { name: workspace.name, currency, country, profile }
+    }
+  });
+
   res.status(201).json({ workspace });
 }));
 
@@ -64,11 +80,31 @@ router.post('/:id/members', requireWorkspaceRole, allowRoles('OWNER', 'ADMIN'), 
   const user = await prisma.user.findUnique({ where: { email: data.email } });
   if (!user) throw new AppError('This user must register before being added.', 404);
 
+  const existing = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId: user.id, workspaceId: req.params.id } }
+  });
+
+  if (existing?.role === 'OWNER') {
+    throw new AppError('The workspace OWNER role cannot be demoted or changed via member management.', 400);
+  }
+
   const member = await prisma.membership.upsert({
     where: { userId_workspaceId: { userId: user.id, workspaceId: req.params.id } },
     update: { role: data.role },
     create: { userId: user.id, workspaceId: req.params.id, role: data.role }
   });
+
+  await prisma.auditLog.create({
+    data: {
+      workspaceId: req.params.id,
+      actorId: req.user.id,
+      action: existing ? 'MEMBER_ROLE_UPDATED' : 'MEMBER_ADDED',
+      entityType: 'Membership',
+      entityId: member.id,
+      details: { email: data.email, role: data.role }
+    }
+  });
+
   res.status(201).json({ membership: member });
 }));
 
@@ -78,6 +114,18 @@ router.delete('/:id/members/:memberId', requireWorkspaceRole, allowRoles('OWNER'
   if (member.role === 'OWNER') throw new AppError('Workspace owner cannot be removed.', 400);
 
   await prisma.membership.delete({ where: { id: member.id } });
+
+  await prisma.auditLog.create({
+    data: {
+      workspaceId: req.params.id,
+      actorId: req.user.id,
+      action: 'MEMBER_REMOVED',
+      entityType: 'Membership',
+      entityId: member.id,
+      details: { memberId: member.id, userId: member.userId }
+    }
+  });
+
   res.json({ success: true, message: 'Member removed from workspace.' });
 }));
 

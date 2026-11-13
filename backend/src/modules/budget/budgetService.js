@@ -103,14 +103,22 @@ export class BudgetService {
   /**
    * Computes live budget variance by dynamically querying actual expenses from PostgreSQL
    */
-  async computeVariance(workspaceId, actualExpenses = null) {
+  async computeVariance(workspaceId, actualExpenses = null, options = {}) {
     await this.ensureWorkspace(workspaceId);
     const workspaceBudgets = await this.listBudgets(workspaceId);
 
     let expenses = actualExpenses;
     if (!expenses) {
+      const dateFilter = {};
+      if (options.startDate) dateFilter.gte = new Date(options.startDate);
+      if (options.endDate) dateFilter.lte = new Date(options.endDate);
+
       const dbExpenses = await prisma.expense.findMany({
-        where: { workspaceId, status: { in: ['APPROVED', 'PAID'] } }
+        where: {
+          workspaceId,
+          status: { in: ['APPROVED', 'PAID'] },
+          ...(Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {})
+        }
       });
       expenses = dbExpenses.map((e) => ({
         category: e.category,

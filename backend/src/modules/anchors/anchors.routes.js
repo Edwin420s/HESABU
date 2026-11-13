@@ -64,20 +64,36 @@ router.post('/workspaces/:workspaceId/anchors/generate', requireWorkspaceRole, a
   });
 }));
 
-// Independent verification of a transaction leaf proof
+// Independent verification of a transaction leaf proof against workspace anchors
 router.post('/workspaces/:workspaceId/anchors/verify-leaf', requireWorkspaceRole, asyncHandler(async (req, res) => {
-  const { leafHash, proof, rootHash } = z.object({
+  const { leafHash, proof, rootHash, anchorId } = z.object({
     leafHash: z.string().length(64),
     rootHash: z.string().length(64),
+    anchorId: z.string().optional(),
     proof: z.array(z.object({
       position: z.enum(['left', 'right']),
       hash: z.string().length(64)
     }))
   }).parse(req.body);
 
-  const isValid = verifyMerkleProof(leafHash, proof, rootHash);
+  const anchor = await prisma.statementAnchor.findFirst({
+    where: {
+      workspaceId: req.params.workspaceId,
+      merkleRoot: rootHash,
+      ...(anchorId ? { id: anchorId } : {})
+    }
+  });
+
+  const isValidProof = verifyMerkleProof(leafHash, proof, rootHash);
+  const isRegisteredAnchor = !!anchor;
+
   res.json({
-    verified: isValid,
+    verified: isValidProof && isRegisteredAnchor,
+    proofValid: isValidProof,
+    anchorRegistered: isRegisteredAnchor,
+    anchorId: anchor?.id || null,
+    network: anchor?.network || null,
+    contractAddress: anchor?.contractAddress || null,
     leafHash,
     rootHash,
     proofStepsCount: proof.length

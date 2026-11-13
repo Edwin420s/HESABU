@@ -1,38 +1,11 @@
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
+import { initializeWorkspaceChartOfAccounts } from '../src/modules/finance/chartOfAccounts.js';
 const prisma = new PrismaClient();
 
-const STANDARD_ACCOUNTS = [
-  { code: '1000', name: 'Petty Cash / Clearing', type: 'ASSET' },
-  { code: '1010', name: 'M-Pesa Collections Clearing', type: 'ASSET' },
-  { code: '1020', name: 'Stellar USDC Wallet', type: 'ASSET' },
-  { code: '1030', name: 'South Africa Bank / PayShap Clearing', type: 'ASSET' },
-  { code: '1200', name: 'Accounts Receivable', type: 'ASSET' },
-  { code: '2000', name: 'Accounts Payable', type: 'LIABILITY' },
-  { code: '2100', name: 'Member Contributions Payable', type: 'LIABILITY' },
-  { code: '2200', name: 'ROSCA Pot Holding', type: 'LIABILITY' },
-  { code: '3000', name: 'Group Capital & Retained Reserves', type: 'EQUITY' },
-  { code: '4000', name: 'Commercial & Invoicing Revenue', type: 'REVENUE' },
-  { code: '5000', name: 'General Operating Expenditure', type: 'EXPENSE' },
-  { code: '5100', name: 'Logistics, Travel & Field Work', type: 'EXPENSE' }
-];
-
 async function seedChartOfAccounts(workspaceId, currency) {
-  for (const acc of STANDARD_ACCOUNTS) {
-    await prisma.chartOfAccount.upsert({
-      where: { workspaceId_code: { workspaceId, code: acc.code } },
-      update: {},
-      create: {
-        workspaceId,
-        code: acc.code,
-        name: acc.name,
-        type: acc.type,
-        currency,
-        isSystem: true
-      }
-    });
-  }
+  await initializeWorkspaceChartOfAccounts(workspaceId, currency, prisma);
 }
 
 async function main() {

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../shared/errors.js';
+import { postingService } from '../finance/postingService.js';
 
 export class LoanService {
   /**
@@ -225,20 +226,51 @@ export class LoanService {
   }
 
   async disburseLoan(loanId, actorId) {
-    const loan = await prisma.tableLoan.findUnique({ where: { id: loanId } });
+    const loan = await prisma.tableLoan.findUnique({
+      where: { id: loanId },
+      include: { workspace: true }
+    });
     if (!loan) throw new AppError('Loan not found', 404);
 
     if (loan.status !== 'APPROVED') {
       throw new AppError(`Cannot disburse loan in status "${loan.status}". Loan must be in "APPROVED" status before disbursement.`, 400);
     }
 
-    const updated = await prisma.tableLoan.update({
-      where: { id: loanId },
-      data: { status: 'ACTIVE' },
-      include: { scheduleRows: { orderBy: { installmentNumber: 'asc' } } }
-    });
+    const wsCurrency = loan.workspace?.currency || 'KES';
 
-    return this.formatLoan(updated);
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.tableLoan.update({
+        where: { id: loanId },
+        data: { status: 'ACTIVE' },
+        include: { scheduleRows: { orderBy: { installmentNumber: 'asc' } } }
+      });
+
+      // Post double-entry journal entry: Debit Loans Receivable Asset, Credit Cash/Bank Asset
+      await postingService.postEntry({
+        workspaceId: loan.workspaceId,
+        reference: `LOAN-DISBURSE-${loan.id.slice(-8)}-${Date.now()}`,
+        description: `Disbursement of Table Banking loan ${loan.id} to ${loan.borrowerName}`,
+        lines: [
+          { accountCode: '1300-LOANS-RECEIVABLE', side: 'DEBIT', amountMinor: loan.principalMinor, currency: wsCurrency },
+          { accountCode: '1000-CASH-CLEARING', side: 'CREDIT', amountMinor: loan.principalMinor, currency: wsCurrency }
+        ],
+        actorId,
+        tx
+      });
+
+      await tx.auditLog.create({
+        data: {
+          workspaceId: loan.workspaceId,
+          actorId,
+          action: 'LOAN_DISBURSED',
+          entityType: 'TableLoan',
+          entityId: loan.id,
+          details: { borrowerMemberId: loan.borrowerMemberId, principalMinor: loan.principalMinor.toString() }
+        }
+      });
+
+      return this.formatLoan(updated);
+    });
   }
 
   async recordRepayment(loanId, amountMinor, transactionRef, actorId) {
@@ -248,7 +280,7 @@ export class LoanService {
     return prisma.$transaction(async (tx) => {
       const loan = await tx.tableLoan.findUnique({
         where: { id: loanId },
-        include: { scheduleRows: { orderBy: { installmentNumber: 'asc' } } }
+        include: { scheduleRows: { orderBy: { installmentNumber: 'asc' } }, workspace: true }
       });
       if (!loan) throw new AppError('Loan not found', 404);
 
@@ -259,12 +291,17 @@ export class LoanService {
         data: {
           loanId: loan.id,
           amountMinor: repaymentAmount,
-          paymentRef: transactionRef || `REP-${Date.now()}`
+          currency: loan.workspace?.currency || 'KES',
+          paymentRef: transactionRef || `REP-${Date.now()}`,
+          verified: true
         }
       });
 
       // Allocate repayment progressively across schedule rows
       let unallocated = repaymentAmount;
+      let totalInterestAllocated = 0n;
+      let totalPrincipalAllocated = 0n;
+
       for (const row of loan.scheduleRows || []) {
         if (unallocated <= 0n) break;
         if (row.status === 'PAID') continue;
@@ -280,6 +317,9 @@ export class LoanService {
           const remainingInterestDue = row.interestDueMinor > currentInterestPaid ? row.interestDueMinor - currentInterestPaid : 0n;
           const allocateInterest = allocateToRow < remainingInterestDue ? allocateToRow : remainingInterestDue;
           const allocatePrincipal = allocateToRow - allocateInterest;
+
+          totalInterestAllocated += allocateInterest;
+          totalPrincipalAllocated += allocatePrincipal;
 
           const newInterestPaid = currentInterestPaid + allocateInterest;
           const newPrincipalPaid = currentPrincipalPaid + allocatePrincipal;
@@ -297,6 +337,50 @@ export class LoanService {
           unallocated -= allocateToRow;
         }
       }
+
+      // Post double-entry journal entry:
+      // Debit Cash/Clearing: repaymentAmount
+      // Credit Loans Receivable Asset: totalPrincipalAllocated
+      // Credit Loan Interest Income: totalInterestAllocated
+      const wsCurrency = loan.workspace?.currency || 'KES';
+      const lines = [
+        { accountCode: '1000-CASH-CLEARING', side: 'DEBIT', amountMinor: repaymentAmount, currency: wsCurrency }
+      ];
+      if (totalPrincipalAllocated > 0n) {
+        lines.push({ accountCode: '1300-LOANS-RECEIVABLE', side: 'CREDIT', amountMinor: totalPrincipalAllocated, currency: wsCurrency });
+      }
+      if (totalInterestAllocated > 0n) {
+        lines.push({ accountCode: '4200-LOAN-INTEREST-INCOME', side: 'CREDIT', amountMinor: totalInterestAllocated, currency: wsCurrency });
+      }
+      const unallocatedExcess = repaymentAmount - totalPrincipalAllocated - totalInterestAllocated;
+      if (unallocatedExcess > 0n) {
+        lines.push({ accountCode: '2100-CONTRIBUTIONS-PAYABLE', side: 'CREDIT', amountMinor: unallocatedExcess, currency: wsCurrency });
+      }
+
+      await postingService.postEntry({
+        workspaceId: loan.workspaceId,
+        reference: `LOAN-REPAY-${loan.id.slice(-8)}-${Date.now()}`,
+        description: `Loan repayment of ${repaymentAmount.toString()} from ${loan.borrowerName} (${transactionRef || 'Cash'})`,
+        lines,
+        actorId,
+        tx
+      });
+
+      await tx.auditLog.create({
+        data: {
+          workspaceId: loan.workspaceId,
+          actorId,
+          action: 'LOAN_REPAYMENT_RECORDED',
+          entityType: 'TableLoan',
+          entityId: loan.id,
+          details: {
+            amountMinor: repaymentAmount.toString(),
+            principalAllocated: totalPrincipalAllocated.toString(),
+            interestAllocated: totalInterestAllocated.toString(),
+            transactionRef
+          }
+        }
+      });
 
       const updated = await tx.tableLoan.update({
         where: { id: loan.id },

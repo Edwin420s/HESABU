@@ -161,6 +161,12 @@ loanRouter.post('/loans/:loanId/repay', async (req, res, next) => {
       throw new AppError('Access denied: you must be a workspace member to record a loan repayment.', 403, 'FORBIDDEN');
     }
 
+    const isBorrower = loan.borrowerMemberId === membership.id;
+    const isOfficer = ['OWNER', 'ADMIN', 'FINANCE_MANAGER'].includes(membership.role);
+    if (!isBorrower && !isOfficer) {
+      throw new AppError('Only the loan borrower or an authorized finance officer can record loan repayments.', 403, 'FORBIDDEN');
+    }
+
     if (!amountMinor || BigInt(amountMinor) <= 0n) {
       throw new AppError('amountMinor must be greater than zero.', 400, 'INVALID_INPUT');
     }

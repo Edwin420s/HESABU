@@ -35,6 +35,10 @@ export class StatementPdfFormatter {
 
     const docId = `hesabu_stmt_${crypto.randomBytes(8).toString('hex')}`;
 
+    const verificationStatus = (merkleRoot && sorobanContractId)
+      ? 'INDEPENDENTLY AUDITABLE ON STELLAR HORIZON'
+      : (merkleRoot ? 'CRYPTOGRAPHIC MERKLE ROOT CALCULATED (LOCAL STATEMENT AUDIT)' : 'PENDING ON-CHAIN ANCHORING');
+
     return `${separator}
 HESABU ENTERPRISE FINANCIAL STATEMENT
 Workspace: ${workspaceName}
@@ -59,7 +63,7 @@ ${separator}
 NET OPERATIONAL SURPLUS / (DEFICIT):             ${fmt(netSurplusMinor).padStart(22)}
 ${separator}
 
-3. CRYPTOGRAPHIC PROOF & ON-CHAIN ANCHORING
+3. CRYPTOGRAPHIC PROOF & ANCHORING AUDIT
 ${thinSeparator}
 Merkle Root SHA-256:
 ${merkleRoot || 'NOT_ANCHORED'}
@@ -67,7 +71,7 @@ ${merkleRoot || 'NOT_ANCHORED'}
 Stellar Soroban Contract Address:
 ${sorobanContractId || 'NOT_CONFIGURED'}
 
-Verification Status: INDEPENDENTLY AUDITABLE ON STELLAR HORIZON
+Verification Status: ${verificationStatus}
 ${separator}
 End of Official Statement
 `;

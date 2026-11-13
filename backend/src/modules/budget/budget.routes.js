@@ -92,7 +92,10 @@ budgetRouter.get('/workspaces/:workspaceId/budgets/variance', async (req, res, n
 
     if (!membership) throw new AppError('Access denied.', 403, 'FORBIDDEN');
 
-    const variance = await budgetService.computeVariance(workspaceId);
+    const variance = await budgetService.computeVariance(workspaceId, null, {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate
+    });
     res.json(jsonSafe(variance));
   } catch (err) {
     next(err);

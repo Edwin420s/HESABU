@@ -184,18 +184,23 @@ export class AgenticFinanceEngine {
       })
     ]);
 
-    // Group cash by currency
+    // Group cash by currency: only PAID expenses reduce liquid cash; APPROVED unpaid expenses are commitments
     const cashByCurrency = {};
     for (const s of settlements) {
       cashByCurrency[s.currency] = (cashByCurrency[s.currency] || 0n) + s.amountMinor;
     }
-    for (const e of expenses) {
+    const paidExpenses = expenses.filter(e => e.status === 'PAID');
+    const pendingExpenses = expenses.filter(e => e.status === 'APPROVED');
+    for (const e of paidExpenses) {
       cashByCurrency[e.currency] = (cashByCurrency[e.currency] || 0n) - e.amountMinor;
     }
 
     let upcomingPayablesMinor = 0n;
     for (const b of bills) {
       upcomingPayablesMinor += b.amountMinor;
+    }
+    for (const pe of pendingExpenses) {
+      upcomingPayablesMinor += pe.amountMinor;
     }
 
     let pendingRoscaPayoutsMinor = 0n;
@@ -240,7 +245,7 @@ export class AgenticFinanceEngine {
       for (let j = i + 1; j < expenses.length; j++) {
         const e1 = expenses[i];
         const e2 = expenses[j];
-        if (e1.category === e2.category && e1.amountMinor === e2.amountMinor) {
+        if (e1.category === e2.category && e1.amountMinor === e2.amountMinor && e1.currency === e2.currency) {
           const diffMs = Math.abs(new Date(e1.createdAt).getTime() - new Date(e2.createdAt).getTime());
           if (diffMs < 48 * 3600000) {
             anomalies.push({

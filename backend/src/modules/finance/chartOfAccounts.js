@@ -1,4 +1,5 @@
 import { AppError } from '../../shared/errors.js';
+import { prisma } from '../../config/prisma.js';
 
 export const ACCOUNT_CATEGORIES = {
   ASSET: 'ASSET',
@@ -246,5 +247,28 @@ export function isValidAccountCode(code) {
 export function assertValidAccountCode(code) {
   if (!isValidAccountCode(code)) {
     throw new AppError(`Invalid Chart of Accounts code "${code}". Must follow standard format (e.g. 1000-CASH-CLEARING).`, 400);
+  }
+}
+
+/**
+ * Initializes the authoritative Chart of Accounts for a workspace in PostgreSQL
+ */
+export async function initializeWorkspaceChartOfAccounts(workspaceId, currency = 'KES', tx = prisma) {
+  const accountsToCreate = Object.values(CHART_OF_ACCOUNTS).map(acc => ({
+    workspaceId,
+    code: acc.code,
+    name: acc.name,
+    type: acc.category,
+    currency,
+    description: acc.description,
+    isSystem: true
+  }));
+
+  for (const acc of accountsToCreate) {
+    await tx.chartOfAccount.upsert({
+      where: { workspaceId_code: { workspaceId, code: acc.code } },
+      update: {},
+      create: acc
+    });
   }
 }

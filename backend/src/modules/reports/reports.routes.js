@@ -16,25 +16,46 @@ reportsRouter.use(authenticate);
 reportsRouter.get('/workspaces/:workspaceId/reports/statement/download', requireWorkspaceRole, async (req, res, next) => {
   try {
     const { workspaceId } = req.params;
-    const { period = 'Current Period' } = req.query;
+    const { period = 'Current Period', startDate, endDate } = req.query;
 
-    const workspace = await prisma.workspace.findUnique({
-      where: { id: workspaceId },
-      include: {
-        obligations: { where: { status: 'SETTLED' } },
-        expenses: { where: { status: 'PAID' } },
-      },
-    });
+    const dateFilter = {};
+    if (startDate) dateFilter.gte = new Date(startDate);
+    if (endDate) dateFilter.lte = new Date(endDate);
+    const hasDateFilter = Object.keys(dateFilter).length > 0;
+
+    const [workspace, latestAnchor] = await Promise.all([
+      prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        include: {
+          obligations: {
+            where: {
+              status: 'SETTLED',
+              ...(hasDateFilter ? { updatedAt: dateFilter } : {})
+            }
+          },
+          expenses: {
+            where: {
+              status: 'PAID',
+              ...(hasDateFilter ? { updatedAt: dateFilter } : {})
+            }
+          },
+        },
+      }),
+      prisma.statementAnchor.findFirst({
+        where: { workspaceId },
+        orderBy: { createdAt: 'desc' }
+      })
+    ]);
 
     if (!workspace) throw new AppError('Workspace not found', 404, 'NOT_FOUND');
 
     const inflows = workspace.obligations.map((o) => ({
-      description: o.description || 'Member Contribution',
+      description: o.description || o.title || 'Member Contribution',
       amountMinor: Number(o.amountMinor),
     }));
 
     const outflows = workspace.expenses.map((e) => ({
-      description: e.description || 'Approved Expense',
+      description: e.description || e.title || 'Approved Expense',
       amountMinor: Number(e.amountMinor),
     }));
 
@@ -44,6 +65,8 @@ reportsRouter.get('/workspaces/:workspaceId/reports/statement/download', require
       periodLabel: String(period),
       inflows,
       outflows,
+      merkleRoot: latestAnchor?.merkleRoot || '',
+      sorobanContractId: latestAnchor?.contractAddress || ''
     });
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');

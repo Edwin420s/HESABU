@@ -187,21 +187,26 @@ router.post('/payments/payshap-webhook', asyncHandler(async (req, res) => {
   const signature = req.headers['x-payshap-signature'] || req.headers['x-signature'] || req.body.signature;
   const timestamp = req.headers['x-timestamp'] || req.body.timestamp;
 
+  const refCandidates = [req.body.referenceNumber, req.body.paymentReference, req.body.intentId, req.body.providerRef].filter(Boolean);
+  const payment = await prisma.payment.findFirst({
+    where: {
+      OR: [
+        ...(refCandidates.length > 0 ? [{ providerRef: { in: refCandidates } }] : []),
+        ...(req.body.paymentId ? [{ id: req.body.paymentId }] : [])
+      ]
+    },
+    include: { obligation: true }
+  });
+
   const verified = await provider.verifyEvent({
     webhookPayload: req.body,
     signature,
     timestamp,
-    rawBody
-  });
-
-  const payment = await prisma.payment.findFirst({
-    where: {
-      OR: [
-        { providerRef: verified.referenceNumber },
-        { id: req.body.paymentId || 'NONE' }
-      ]
-    },
-    include: { obligation: true }
+    rawBody,
+    expectedPayment: payment ? {
+      amountMinor: payment.amountMinor,
+      challengeToken: payment.metadata?.challengeToken || null
+    } : null
   });
 
   const providerEvent = await prisma.providerEvent.create({
@@ -715,7 +720,7 @@ router.post('/payments/:id/mpesa-confirm', asyncHandler(async (req, res) => {
         status: 'CONFIRMED',
         providerRef: cleanReceipt,
         mpesaReceiptNumber: cleanReceipt,
-        metadata: { ...(payment.metadata || {}), receiptNumber: cleanReceipt, phoneNumber: data.phoneNumber, verifiedBy: req.user.id }
+        metadata: { ...(payment.metadata || {}), receiptNumber: cleanReceipt, phoneNumber: data.phoneNumber, verifiedBy: req.user.id, confirmationType: 'MANUAL_OFFICER_OVERRIDE' }
       }
     });
 
@@ -756,7 +761,7 @@ router.post('/payments/:id/mpesa-confirm', asyncHandler(async (req, res) => {
     return updated;
   });
 
-  res.json({ payment: jsonSafe(result), receiptNumber: cleanReceipt, notice: 'M-Pesa receipt verified by administrator and posted to journal.' });
+  res.json({ payment: jsonSafe(result), receiptNumber: cleanReceipt, notice: 'Manual M-Pesa receipt registered and posted with officer audit trail.' });
 }));
 
 // PayShap / South Africa EFT confirmation (Restricted to Finance Managers / Admins with audit trail)
@@ -932,6 +937,27 @@ router.post('/workspaces/:workspaceId/expenses', requireWorkspaceRole, asyncHand
   const workspace = await prisma.workspace.findUnique({ where: { id: req.params.workspaceId } });
   const amountMinor = parseMinorUnits(data.amount);
 
+  let preparedSplits = [];
+  if (data.splits && data.splits.length > 0) {
+    let splitsSum = 0n;
+    preparedSplits = data.splits.map(s => {
+      const splitAmountMinor = parseMinorUnits(s.amount);
+      splitsSum += splitAmountMinor;
+      return {
+        memberName: s.memberName,
+        memberEmail: s.memberEmail,
+        amountMinor: splitAmountMinor
+      };
+    });
+
+    if (splitsSum !== amountMinor) {
+      throw new AppError(
+        `Expense splits total (${splitsSum.toString()}) does not match expense amount (${amountMinor.toString()}). Difference: ${(amountMinor - splitsSum).toString()} minor units.`,
+        400
+      );
+    }
+  }
+
   const expense = await prisma.expense.create({
     data: {
       workspaceId: workspace.id,
@@ -942,12 +968,8 @@ router.post('/workspaces/:workspaceId/expenses', requireWorkspaceRole, asyncHand
       currency: workspace.currency,
       submittedById: req.user.id,
       receiptUrl: data.receiptUrl,
-      splits: data.splits && data.splits.length > 0 ? {
-        create: data.splits.map(s => ({
-          memberName: s.memberName,
-          memberEmail: s.memberEmail,
-          amountMinor: parseMinorUnits(s.amount)
-        }))
+      splits: preparedSplits.length > 0 ? {
+        create: preparedSplits
       } : undefined
     },
     include: { splits: true }
@@ -970,8 +992,18 @@ router.post('/expenses/:id/approve', asyncHandler(async (req, res) => {
   if (!membership || !['OWNER', 'ADMIN', 'APPROVER', 'FINANCE_MANAGER'].includes(membership.role)) {
     throw new AppError('Approval permission required.', 403);
   }
-  if (expense.submittedById === req.user.id && membership.role !== 'OWNER') {
-    throw new AppError('Separation of duties: you cannot approve your own expense submission.', 403);
+
+  // Strict separation of duties: a submitter cannot approve their own expense if other approvers exist
+  const otherApproversCount = await prisma.membership.count({
+    where: {
+      workspaceId: expense.workspaceId,
+      userId: { not: req.user.id },
+      role: { in: ['OWNER', 'ADMIN', 'FINANCE_MANAGER', 'APPROVER'] }
+    }
+  });
+
+  if (expense.submittedById === req.user.id && otherApproversCount > 0) {
+    throw new AppError('Separation of duties: you cannot approve your own expense submission when other authorized approvers exist.', 403);
   }
 
   const updated = await prisma.$transaction(async tx => {

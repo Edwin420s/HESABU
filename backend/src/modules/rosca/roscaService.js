@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../shared/errors.js';
+import { postingService } from '../finance/postingService.js';
 
 export class RoscaService {
   /**
@@ -141,6 +142,30 @@ export class RoscaService {
         }
       });
 
+      // Post double-entry journal entry: Debit Cash/Bank, Credit ROSCA Round Liability
+      await postingService.postEntry({
+        workspaceId: cycle.workspaceId,
+        reference: `ROSCA-CONTRIB-${cycle.id.slice(-6)}-R${activeRound.roundNumber}-${memberId.slice(-6)}-${Date.now()}`,
+        description: `ROSCA round ${activeRound.roundNumber} contribution from member ${memberId}`,
+        lines: [
+          { accountCode: '1000-CASH-CLEARING', side: 'DEBIT', amountMinor: amount, currency: cycle.currency || 'KES' },
+          { accountCode: '2200-ROSCA-ROUNDS-PAYABLE', side: 'CREDIT', amountMinor: amount, currency: cycle.currency || 'KES' }
+        ],
+        actorId,
+        tx
+      });
+
+      await tx.auditLog.create({
+        data: {
+          workspaceId: cycle.workspaceId,
+          actorId,
+          action: 'ROSCA_CONTRIBUTION_RECORDED',
+          entityType: 'RoscaRound',
+          entityId: activeRound.id,
+          details: { cycleId, roundNumber: activeRound.roundNumber, memberId, amountMinor: amount.toString() }
+        }
+      });
+
       return {
         cycleId,
         roundNumber: activeRound.roundNumber,
@@ -170,11 +195,43 @@ export class RoscaService {
         throw new AppError('Round pot is underfunded', 400);
       }
 
+      const payoutTxRef = `ROSCA-PAYOUT-${cycle.id.slice(-6)}-R${activeRound.roundNumber}-${Date.now()}`;
       await tx.roscaRound.update({
         where: { id: activeRound.id },
         data: {
           status: 'PAID_OUT',
-          disbursedAt: new Date()
+          disbursedAt: new Date(),
+          payoutTxRef
+        }
+      });
+
+      // Post double-entry journal entry: Debit ROSCA Round Liability, Credit Cash/Bank
+      await postingService.postEntry({
+        workspaceId: cycle.workspaceId,
+        reference: payoutTxRef,
+        description: `ROSCA round ${activeRound.roundNumber} pot disbursement to scheduled beneficiary ${activeRound.beneficiaryMemberId}`,
+        lines: [
+          { accountCode: '2200-ROSCA-ROUNDS-PAYABLE', side: 'DEBIT', amountMinor: activeRound.expectedPayoutMinor, currency: cycle.currency || 'KES' },
+          { accountCode: '1000-CASH-CLEARING', side: 'CREDIT', amountMinor: activeRound.expectedPayoutMinor, currency: cycle.currency || 'KES' }
+        ],
+        actorId,
+        tx
+      });
+
+      await tx.auditLog.create({
+        data: {
+          workspaceId: cycle.workspaceId,
+          actorId,
+          action: 'ROSCA_ROUND_DISBURSED',
+          entityType: 'RoscaRound',
+          entityId: activeRound.id,
+          details: {
+            cycleId,
+            roundNumber: activeRound.roundNumber,
+            beneficiaryId: activeRound.beneficiaryMemberId,
+            payoutAmountMinor: activeRound.expectedPayoutMinor.toString(),
+            payoutTxRef
+          }
         }
       });
 
